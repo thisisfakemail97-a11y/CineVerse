@@ -1,0 +1,6 @@
+{
+  "name": "Cineverse",
+  "description": "Personal movie and series discovery platform with AI recommendations, streaming availability, and library tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

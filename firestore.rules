@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.userId is string && data.userId == request.auth.uid;
+    }
+
+    function isValidLibraryEntry(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.titleId is string && data.titleId.size() > 0 &&
+             data.title is string && data.title.size() > 0 &&
+             data.status in ['Watchlist', 'Watched', 'Dropped'] &&
+             data.personalRating is number && data.personalRating >= 0 && data.personalRating <= 10 &&
+             data.rewatchCount is number && data.rewatchCount >= 1;
+    }
+
+    function isValidHistoryEntry(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.titleId is string && data.titleId.size() > 0 &&
+             data.rewatchSequence is number && data.rewatchSequence >= 1;
+    }
+
+    function isValidDiaryEntry(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.titleId is string && data.titleId.size() > 0 &&
+             data.movieTitle is string;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) && (request.resource == null || isValidUser(request.resource.data));
+
+      match /library/{titleId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidLibraryEntry(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /history/{historyId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidHistoryEntry(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /diary/{diaryId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidDiaryEntry(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

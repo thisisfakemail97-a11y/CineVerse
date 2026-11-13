@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "UserProfile": {
+      "collection": "users",
+      "documentId": "{userId}",
+      "fields": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      }
+    },
+    "LibraryEntry": {
+      "collection": "users/{userId}/library",
+      "documentId": "{titleId}",
+      "fields": {
+        "userId": { "type": "string" },
+        "titleId": { "type": "string" },
+        "title": { "type": "string" },
+        "posterUrl": { "type": "string" },
+        "releaseYear": { "type": "number" },
+        "contentType": { "type": "string" },
+        "status": { "type": "string" },
+        "personalRating": { "type": "number" },
+        "personalReview": { "type": "string" },
+        "notes": { "type": "string" },
+        "isFavorite": { "type": "boolean" },
+        "rewatchCount": { "type": "number" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      }
+    },
+    "ViewingHistory": {
+      "collection": "users/{userId}/history",
+      "documentId": "{historyId}",
+      "fields": {
+        "userId": { "type": "string" },
+        "titleId": { "type": "string" },
+        "movieTitle": { "type": "string" },
+        "watchDate": { "type": "string" },
+        "rewatchSequence": { "type": "number" },
+        "sessionRating": { "type": "number" },
+        "sessionNotes": { "type": "string" },
+        "createdAt": { "type": "timestamp" }
+      }
+    },
+    "DiaryEntry": {
+      "collection": "users/{userId}/diary",
+      "documentId": "{diaryId}",
+      "fields": {
+        "userId": { "type": "string" },
+        "titleId": { "type": "string" },
+        "movieTitle": { "type": "string" },
+        "posterUrl": { "type": "string" },
+        "entryDate": { "type": "string" },
+        "review": { "type": "string" },
+        "thoughts": { "type": "string" },
+        "rating": { "type": "number" },
+        "tags": { "type": "list" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      }
+    }
+  }
+}
