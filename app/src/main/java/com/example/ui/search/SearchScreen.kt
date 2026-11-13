@@ -83,28 +83,90 @@ fun SearchScreen(
     var socialStatusBanner by remember { mutableStateOf<String?>(null) }
     var showSocialDiscoveriesVault by remember { mutableStateOf(false) }
 
-    // Detect if input is a social media or web URL
+    // Detect if input is a social media or web URL (even if pasted with surrounding share text)
     val isSocialUrl = remember(query) {
         val lower = query.trim().lowercase()
-        lower.startsWith("http://") || lower.startsWith("https://") ||
+        lower.contains("http://") || lower.contains("https://") ||
             listOf(
                 "instagram.com",
+                "instagr.am",
                 "youtube.com",
                 "youtu.be",
                 "reddit.com",
+                "redd.it",
                 "x.com",
                 "twitter.com",
                 "tiktok.com",
+                "vt.tiktok.com",
+                "vm.tiktok.com",
                 "facebook.com",
-                "fb.watch"
+                "fb.watch",
+                "bit.ly",
+                "t.co"
             ).any { domain -> lower.contains(domain) }
     }
 
-    // Real-time search automatically triggered while typing (when not a raw URL)
+    // Helper to run social link / caption extraction and auto-handle repeated titles
+    suspend fun performSocialExtraction(rawUrlInput: String, rawManualText: String) {
+        isExtractingSocial = true
+        socialStatusBanner = null
+        try {
+            val extractedUrlToken = Regex("""https?://[^\s"'<>]+""", RegexOption.IGNORE_CASE)
+                .find(rawUrlInput)?.value ?: rawUrlInput.trim()
+            val result = repository.extractFromSocialUrlOrText(
+                urlInput = extractedUrlToken,
+                manualTextInput = rawManualText
+            )
+            socialExtractionResult = result
+            extractedMentions = result.mentions
+            skippedMentionIds = emptySet()
+            selectedMentionIds = result.mentions
+                .filter { !it.isUncertain || it.isConfirmedByUser }
+                .map { it.id }
+                .toSet()
+
+            // Auto-mark repeated movies as Watched if not already in user library
+            val updatedActionLog = mentionActionLog.toMutableMap()
+            result.mentions.forEach { m ->
+                if (m.mentionCount > 1) {
+                    val alreadySaved = userLibrary.any {
+                        it.id == m.movie.id || it.title.equals(m.movie.title, ignoreCase = true)
+                    }
+                    if (!alreadySaved) {
+                        repository.markWatched(
+                            m.movie,
+                            rating = 8,
+                            review = "Repeated mention in ${result.platform} link"
+                        )
+                        onMarkWatched(m.movie)
+                    }
+                    updatedActionLog[m.movie.id] = "Watched"
+                }
+            }
+            mentionActionLog = updatedActionLog
+
+            if (!result.isAccessible && result.mentions.isEmpty()) {
+                showManualTextBox = true
+            }
+            if (result.mentions.isNotEmpty()) {
+                repository.saveSocialDiscovery(result, updatedActionLog)
+            }
+        } catch (e: Exception) {
+            socialStatusBanner = "Extraction note: ${e.localizedMessage ?: "Please try again"}"
+        } finally {
+            isExtractingSocial = false
+        }
+    }
+
+    // Real-time search OR automatic AI social link extraction when a link is pasted
     LaunchedEffect(query, selectedContentType, selectedGenre, isSocialUrl) {
         val trimmed = query.trim()
-        if (isSocialUrl) {
+        if (isSocialUrl && trimmed.isNotEmpty()) {
             isSearching = false
+            searchResults = emptyList()
+            isExtractingSocial = true
+            delay(320)
+            performSocialExtraction(trimmed, manualCaptionInput)
             return@LaunchedEffect
         }
         if (trimmed.isEmpty() && selectedContentType == "All" && selectedGenre == "All") {
@@ -236,7 +298,7 @@ fun SearchScreen(
         Spacer(modifier = Modifier.height(10.dp))
 
         // ==================== SOCIAL MEDIA URL & CAPTION EXTRACTOR ====================
-        AnimatedVisibility(visible = isSocialUrl || showManualTextBox || socialExtractionResult != null) {
+        AnimatedVisibility(visible = isSocialUrl || showManualTextBox || socialExtractionResult != null || isExtractingSocial) {
             GlassCard(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -275,7 +337,9 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = if (isSocialUrl) "Watch Reel & extract all movies mentioned • Gemini AI" else "Paste any reel link, caption, review, or transcript",
+                                    text = if (isExtractingSocial) "AI is thinking & extracting movies from this link..."
+                                    else if (isSocialUrl) "Auto-extracts all movies mentioned in this link • Gemini AI"
+                                    else "Paste any reel link, caption, review, or transcript",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SteelBlue,
                                     maxLines = 2,
@@ -285,35 +349,40 @@ fun SearchScreen(
                         }
 
                         GlassPillButton(
-                            text = if (isExtractingSocial) "Working..." else "Extract",
+                            text = if (isExtractingSocial) "Thinking..." else "Extract",
                             icon = Icons.Default.AutoAwesome,
                             isActive = true,
                             modifier = Modifier.testTag("analyse_with_ai_button"),
                             onClick = {
                                 coroutineScope.launch {
-                                    isExtractingSocial = true
-                                    socialStatusBanner = null
-                                    val result = repository.extractFromSocialUrlOrText(
-                                        urlInput = query,
-                                        manualTextInput = manualCaptionInput
-                                    )
-                                    socialExtractionResult = result
-                                    extractedMentions = result.mentions
-                                    skippedMentionIds = emptySet()
-                                    selectedMentionIds = result.mentions
-                                        .filter { !it.isUncertain || it.isConfirmedByUser }
-                                        .map { it.id }
-                                        .toSet()
-                                    if (!result.isAccessible && result.mentions.isEmpty()) {
-                                        showManualTextBox = true
-                                    }
-                                    if (result.mentions.isNotEmpty()) {
-                                        repository.saveSocialDiscovery(result, mentionActionLog)
-                                    }
-                                    isExtractingSocial = false
+                                    performSocialExtraction(query, manualCaptionInput)
                                 }
                             }
                         )
+                    }
+
+                    if (isExtractingSocial) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ElectricCyan.copy(alpha = 0.12f))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = ElectricCyan,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Loading reel & using AI to extract the list of movies...",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = FrostWhite
+                            )
+                        }
                     }
 
                     // Show Manual Text Input when requested OR when URL is inaccessible (e.g. Instagram/TikTok login wall)
@@ -765,172 +834,131 @@ private fun ExtractedMentionCard(
     onViewDetails: () -> Unit
 ) {
     val movie = mention.movie
-    val confidencePct = (mention.confidence * 100).toInt()
-    val roleColor = when (mention.mentionRole) {
-        "Recommended" -> Color(0xFF00F5D4)
-        "Reviewed" -> ElectricCyan
-        "Criticised" -> Color(0xFFFF5252)
-        "Compared" -> Color(0xFF7209B7)
-        else -> IcyBlue
-    }
+    val isInWatchlist = libraryStatus.equals("Watchlist", ignoreCase = true)
+    val isWatched = libraryStatus.equals("Watched", ignoreCase = true)
 
     GlassCard(
         modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 22.dp,
+        cornerRadius = 20.dp,
         onClick = onViewDetails
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Checkbox(
-                    checked = isSelected,
-                    onCheckedChange = { onToggleSelect() },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = ElectricCyan,
-                        uncheckedColor = SteelBlue
-                    )
-                )
-
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 MoviePosterImage(
                     posterUrl = movie.posterUrl,
                     title = movie.title,
                     signatureColorHex = movie.signatureColorHex,
                     modifier = Modifier
-                        .width(78.dp)
-                        .height(114.dp)
-                        .clip(RoundedCornerShape(14.dp)),
+                        .width(58.dp)
+                        .height(86.dp)
+                        .clip(RoundedCornerShape(12.dp)),
                     contentScale = ContentScale.Crop,
                     releaseYear = movie.releaseYear,
                     movieId = movie.id
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    // Role Badge + Match Confidence + Library Status
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
+                    Text(
+                        text = movie.title,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = FrostWhite,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    Text(
+                        text = "${movie.releaseYear} • ${movie.contentType}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SteelBlue,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (isInWatchlist || isWatched) {
+                        val badgeText = if (isWatched) "Already Watched" else "Already in Watchlist"
+                        val badgeColor = if (isWatched) Color(0xFF00F5D4) else ElectricCyan
+                        val badgeIcon = if (isWatched) Icons.Default.CheckCircle else Icons.Default.BookmarkAdded
+
+                        Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(roleColor.copy(alpha = 0.18f))
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(badgeColor.copy(alpha = 0.16f))
+                                .border(1.dp, badgeColor.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Icon(
+                                imageVector = badgeIcon,
+                                contentDescription = badgeText,
+                                tint = badgeColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = mention.mentionRole.uppercase(),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
-                                color = roleColor,
-                                maxLines = 1
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp
+                                ),
+                                color = badgeColor
                             )
                         }
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        Text(
-                            text = "$confidencePct% Match • $libraryStatus",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            color = if (mention.isUncertain && !mention.isConfirmedByUser) ElectricCyan else IcyBlue,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
+                    } else {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            GlassPillButton(
+                                text = "Add to List",
+                                icon = Icons.Default.BookmarkAdd,
+                                isActive = false,
+                                onClick = onAddToWatchlist
+                            )
+                            GlassPillButton(
+                                text = "Watch",
+                                icon = Icons.Default.CheckCircle,
+                                isActive = false,
+                                onClick = onMarkWatched
+                            )
+                        }
                     }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = "${movie.title} (${movie.releaseYear})",
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.5.sp),
-                        color = FrostWhite
-                    )
-
-                    Text(
-                        text = "${movie.contentType} • Directed by ${movie.director}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SteelBlue
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    if (mention.extractedContext.isNotBlank()) {
-                        Text(
-                            text = mention.extractedContext,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontStyle = FontStyle.Italic,
-                                fontSize = 11.5.sp
-                            ),
-                            color = FrostWhite.copy(alpha = 0.85f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
-
-                    Text(
-                        text = mention.whyMentioned,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = IcyBlue
-                    )
                 }
             }
 
-            // Uncertain match confirmation bar
-            if (mention.isUncertain && !mention.isConfirmedByUser) {
-                Spacer(modifier = Modifier.height(10.dp))
+            if (mention.isUncertain && !mention.isConfirmedByUser && !isInWatchlist && !isWatched) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(ElectricCyan.copy(alpha = 0.16f))
-                        .border(1.dp, ElectricCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ElectricCyan.copy(alpha = 0.14f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "⚠️ Ambiguous / Uncertain match ($confidencePct%) — Confirm before saving",
+                        text = "Uncertain title match — confirm to add",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF00F5D4),
+                        color = IcyBlue,
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = onConfirmUncertain) {
-                        Text("Confirm Match", color = ElectricCyan, fontWeight = FontWeight.Bold)
+                        Text("Confirm Match", color = ElectricCyan, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Action Buttons: Add to Watchlist, Mark as Watched, Skip, View Details
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                GlassPillButton(
-                    text = "Save",
-                    icon = Icons.Default.BookmarkAdd,
-                    isActive = libraryStatus == "Watchlist",
-                    onClick = onAddToWatchlist
-                )
-                GlassPillButton(
-                    text = "Watched",
-                    icon = Icons.Default.CheckCircle,
-                    isActive = libraryStatus == "Watched",
-                    onClick = onMarkWatched
-                )
-                GlassPillButton(
-                    text = "Skip",
-                    icon = Icons.Default.Close,
-                    onClick = onSkip
-                )
-                GlassPillButton(
-                    text = "Open",
-                    icon = Icons.AutoMirrored.Filled.OpenInNew,
-                    onClick = onViewDetails
-                )
             }
         }
     }

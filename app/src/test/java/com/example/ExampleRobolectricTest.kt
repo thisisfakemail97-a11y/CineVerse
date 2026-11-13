@@ -625,6 +625,24 @@ class ExampleRobolectricTest {
         assertEquals(1, skippedRepeat)
         assertEquals("Watched", repository.userLibrary.value.first { it.title == "The Prestige" }.userStatus)
     }
+
+    @Test
+    fun `searchRealTime finds Hindi web series The Family Man and real social reel link extracts movie list`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = CineverseRepository(context)
+
+        val familyManResults = repository.searchRealTime("The Family Man")
+        assertTrue("Search for The Family Man should return results", familyManResults.isNotEmpty())
+        val topHit = familyManResults.first()
+        assertEquals("The Family Man", topHit.title)
+        assertEquals("Web Series", topHit.contentType)
+        assertTrue("The Family Man should have a valid poster URL", topHit.posterUrl.startsWith("https://"))
+
+        // Also test pasting a real Instagram reel link without manual text yields a 4-5 movie list
+        val reelResult = repository.extractFromSocialUrlOrText(
+            urlInput = "https://www.instagram.com/reel/D9mXp789QvL/?igsh=xyz",
+            manualTextInput = ""
+        )
+        assertTrue("Real Instagram reel link should extract at least 4 movies via hook-and-crook pipeline", reelResult.mentions.size >= 4)
+    }
 }
-
-

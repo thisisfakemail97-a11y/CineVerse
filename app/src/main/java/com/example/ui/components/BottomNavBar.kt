@@ -131,11 +131,37 @@ fun CineverseBottomNavBar(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF162538).copy(alpha = 0.90f),
-                            Color(0xFF09121E).copy(alpha = 0.95f)
+                            Color.White.copy(alpha = 0.14f),
+                            Color(0xFF1A2D44).copy(alpha = 0.32f),
+                            Color(0xFF0A1422).copy(alpha = 0.42f)
                         )
                     )
                 )
+                .drawBehind {
+                    // Subtle frosted glass diagonal sheen + top icy frost reflection
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.16f),
+                                Color(0xFFB8E8FF).copy(alpha = 0.07f),
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.08f)
+                            ),
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, size.height)
+                        )
+                    )
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.18f),
+                                Color.Transparent
+                            ),
+                            startY = 0f,
+                            endY = size.height * 0.45f
+                        )
+                    )
+                }
                 .drawWithContent {
                     drawContent()
 
@@ -144,10 +170,10 @@ fun CineverseBottomNavBar(
                     drawRoundRect(
                         brush = Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = breathAlpha * 0.85f),
-                                accentColor.copy(alpha = breathAlpha * 0.85f),
-                                Color.White.copy(alpha = breathAlpha * 0.25f),
-                                accentColor.copy(alpha = breathAlpha * 0.65f)
+                                Color.White.copy(alpha = (breathAlpha * 0.90f).coerceAtMost(0.95f)),
+                                accentColor.copy(alpha = breathAlpha * 0.70f),
+                                Color.White.copy(alpha = breathAlpha * 0.35f),
+                                accentColor.copy(alpha = breathAlpha * 0.55f)
                             ),
                             start = Offset(0f, 0f),
                             end = Offset(size.width, size.height)
