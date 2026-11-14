@@ -1,8 +1,14 @@
 package com.example.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -13,7 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -50,6 +60,7 @@ import com.example.ui.theme.DeepBlack
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.FrostWhite
 import com.example.ui.theme.IcyBlue
+import com.example.ui.theme.MidnightNavy
 import com.example.ui.theme.SteelBlue
 import kotlinx.coroutines.launch
 
@@ -70,6 +81,14 @@ fun HomeScreen(
     val refreshVersion by repository.refreshVersion.collectAsStateWithLifecycle()
     var isRefreshing by remember { mutableStateOf(false) }
 
+    // Configurable Home Grid Columns: 2, 3, 4, or 5 in a row
+    var gridColumns by remember { mutableIntStateOf(2) }
+
+    // Single & Multi-Select Deletion with Confirmation
+    var selectedForDeletionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var movieToDelete by remember { mutableStateOf<MovieItem?>(null) }
+    var showBatchDeleteConfirmDialog by remember { mutableStateOf(false) }
+
     val watchlistOnly = remember(userLibrary, refreshVersion) {
         userLibrary.filter {
             !it.userStatus.equals("Watched", ignoreCase = true) &&
@@ -88,6 +107,13 @@ fun HomeScreen(
         label = "home_search_glow_alpha"
     )
 
+    val gridSpacing = when (gridColumns) {
+        2 -> 12.dp
+        3 -> 9.dp
+        4 -> 7.dp
+        else -> 5.dp
+    }
+
     PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = {
@@ -103,7 +129,7 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize()
     ) {
         LazyVerticalStaggeredGrid(
-            columns = StaggeredGridCells.Fixed(2),
+            columns = StaggeredGridCells.Fixed(gridColumns),
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("home_watchlist_waterfall_grid"),
@@ -113,10 +139,10 @@ fun HomeScreen(
                 top = 14.dp,
                 bottom = 120.dp
             ),
-            verticalItemSpacing = 12.dp,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            verticalItemSpacing = gridSpacing,
+            horizontalArrangement = Arrangement.spacedBy(gridSpacing)
         ) {
-            // Minimal Header & Search Bar
+            // Minimal Header, Search Bar, and Grid Column Selector (2, 3, 4, 5 in a row)
             item(span = StaggeredGridItemSpan.FullLine) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -140,7 +166,7 @@ fun HomeScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${watchlistOnly.size} queued",
+                                text = "${watchlistOnly.size} queued • ${gridColumns} per row",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SteelBlue,
                                 maxLines = 1
@@ -199,6 +225,107 @@ fun HomeScreen(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Grid Column Selector: 2, 3, 4, or 5 in a row
+                    val barOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("home_grid_column_selector"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.GridView,
+                                contentDescription = "Grid Columns",
+                                tint = ElectricCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Grid Layout:",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = IcyBlue
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(2, 3, 4, 5).forEach { colCount ->
+                                val isSelected = gridColumns == colCount
+                                Box(
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (isSelected) ElectricCyan.copy(alpha = (0.32f * barOpacity).coerceIn(0f, 1f))
+                                            else Color(0xFF142336).copy(alpha = (0.85f * barOpacity).coerceIn(0f, 1f))
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) ElectricCyan else IcyBlue.copy(alpha = 0.28f),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { gridColumns = colCount }
+                                        .padding(horizontal = 10.dp)
+                                        .testTag("home_grid_col_$colCount"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "${colCount}x",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        ),
+                                        color = if (isSelected) FrostWhite else SteelBlue
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Batch Multi-Select Delete Bar
+                    AnimatedVisibility(
+                        visible = selectedForDeletionIds.isNotEmpty(),
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        GlassCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .testTag("home_batch_delete_bar"),
+                            cornerRadius = 14.dp
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${selectedForDeletionIds.size} selected",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                    color = FrostWhite
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = { selectedForDeletionIds = emptySet() }) {
+                                        Text("Clear", color = SteelBlue, fontSize = 12.sp)
+                                    }
+                                    GlassPillButton(
+                                        text = "Delete (${selectedForDeletionIds.size})",
+                                        icon = Icons.Default.DeleteOutline,
+                                        compact = true,
+                                        isActive = true,
+                                        onClick = { showBatchDeleteConfirmDialog = true },
+                                        modifier = Modifier.testTag("home_delete_selected_btn")
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             }
@@ -250,23 +377,38 @@ fun HomeScreen(
                 }
             } else {
                 itemsIndexed(watchlistOnly, key = { _, movie -> movie.id }) { index, movie ->
-                    val staggerRatio = when (index % 4) {
-                        0 -> 0.67f
-                        1 -> 0.76f
-                        2 -> 0.72f
-                        else -> 0.65f
+                    val staggerRatio = if (gridColumns == 2) {
+                        when (index % 4) {
+                            0 -> 0.67f
+                            1 -> 0.76f
+                            2 -> 0.72f
+                            else -> 0.65f
+                        }
+                    } else {
+                        0.68f
                     }
+                    val isChecked = movie.id in selectedForDeletionIds
                     WaterfallWatchlistCard(
                         movie = movie,
+                        gridColumns = gridColumns,
                         posterAspectRatio = staggerRatio,
+                        isSelectedForDeletion = isChecked,
+                        onToggleSelectForDeletion = {
+                            selectedForDeletionIds = if (isChecked) {
+                                selectedForDeletionIds - movie.id
+                            } else {
+                                selectedForDeletionIds + movie.id
+                            }
+                        },
                         onClick = { onMovieClick(movie) },
                         onToggleWatchlist = {
                             if (movie.userStatus.equals("Watchlist", ignoreCase = true)) {
-                                repository.removeFromLibrary(movie.id)
+                                movieToDelete = movie
                             } else {
                                 repository.addToWatchlist(movie)
                             }
                         },
+                        onDeleteClick = { movieToDelete = movie },
                         onMarkWatched = {
                             val nextRating = movie.userRating.coerceAtLeast(8)
                             repository.markWatched(movie, rating = nextRating)
@@ -277,17 +419,91 @@ fun HomeScreen(
             }
         }
     }
+
+    // Single Movie Delete Confirmation Dialog
+    if (movieToDelete != null) {
+        val target = movieToDelete!!
+        AlertDialog(
+            onDismissRequest = { movieToDelete = null },
+            containerColor = MidnightNavy,
+            title = { Text("Remove from Watchlist?", color = FrostWhite) },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove \"${target.title}\" from your library?",
+                    color = SteelBlue,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.removeFromLibrary(target.id)
+                        selectedForDeletionIds = selectedForDeletionIds - target.id
+                        movieToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                    modifier = Modifier.testTag("home_confirm_remove_btn")
+                ) {
+                    Text("Remove", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { movieToDelete = null }) {
+                    Text("Cancel", color = FrostWhite)
+                }
+            }
+        )
+    }
+
+    // Multi-Select Delete Confirmation Dialog
+    if (showBatchDeleteConfirmDialog && selectedForDeletionIds.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirmDialog = false },
+            containerColor = MidnightNavy,
+            title = { Text("Remove ${selectedForDeletionIds.size} Selected Movie(s)?", color = FrostWhite) },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove the ${selectedForDeletionIds.size} selected movie(s) from your library?",
+                    color = SteelBlue,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.removeMultipleFromLibrary(selectedForDeletionIds)
+                        selectedForDeletionIds = emptySet()
+                        showBatchDeleteConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                    modifier = Modifier.testTag("home_confirm_batch_remove_btn")
+                ) {
+                    Text("Delete Selected", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = FrostWhite)
+                }
+            }
+        )
+    }
 }
 
 /**
- * Minimal Poster + Title + Uniform Squircle Action Bar card for the 2x2 waterfall Watchlist.
+ * Adaptive Poster + Title + Squircle Action Bar card for 2, 3, 4, or 5 columns per row,
+ * with small Dustbin icon and selection Checkbox.
  */
 @Composable
 fun WaterfallWatchlistCard(
     movie: MovieItem,
+    gridColumns: Int = 2,
     posterAspectRatio: Float = 0.68f,
+    isSelectedForDeletion: Boolean = false,
+    onToggleSelectForDeletion: () -> Unit = {},
     onClick: () -> Unit,
     onToggleWatchlist: () -> Unit,
+    onDeleteClick: () -> Unit = {},
     onMarkWatched: () -> Unit
 ) {
     val sigColor = remember(movie.signatureColorHex) {
@@ -300,14 +516,51 @@ fun WaterfallWatchlistCard(
 
     val isWatched = movie.userStatus.equals("Watched", ignoreCase = true)
     val isInWatchlist = movie.userStatus.equals("Watchlist", ignoreCase = true)
-    val actionSquircleCorner = 13.dp
+    val glassTransparency = com.example.ui.theme.LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
+
+    val cardCorner = when (gridColumns) {
+        2 -> 18.dp
+        3 -> 14.dp
+        4 -> 11.dp
+        else -> 9.dp
+    }
+    val actionSquircleCorner = when (gridColumns) {
+        2 -> 13.dp
+        3 -> 10.dp
+        else -> 8.dp
+    }
     val actionSquircleShape = RoundedCornerShape(actionSquircleCorner)
+    val actionHeight = when (gridColumns) {
+        2 -> 44.dp
+        3 -> 36.dp
+        4 -> 30.dp
+        else -> 26.dp
+    }
+    val titleFontSize = when (gridColumns) {
+        2 -> 13.5.sp
+        3 -> 11.5.sp
+        4 -> 10.sp
+        else -> 9.sp
+    }
+    val contentPad = when (gridColumns) {
+        2 -> 10.dp
+        3 -> 7.dp
+        4 -> 5.dp
+        else -> 4.dp
+    }
+    val overlayIconBoxSize = when (gridColumns) {
+        2 -> 28.dp
+        3 -> 24.dp
+        else -> 20.dp
+    }
 
     GlassCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("watchlist_waterfall_card_${movie.id}"),
-        cornerRadius = 18.dp,
+        cornerRadius = cardCorner,
         borderWidth = 1.2.dp,
         onClick = onClick
     ) {
@@ -331,54 +584,97 @@ fun WaterfallWatchlistCard(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, DeepBlack.copy(alpha = 0.58f)),
+                                colors = listOf(Color.Transparent, DeepBlack.copy(alpha = 0.58f * opacityFactor)),
                                 startY = 140f
                             )
                         )
                 )
+
+                // Top-left checkbox + Top-right small dustbin icon
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(overlayIconBoxSize)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(DeepBlack.copy(alpha = 0.65f))
+                            .clickable { onToggleSelectForDeletion() }
+                            .testTag("home_select_checkbox_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isSelectedForDeletion) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                            contentDescription = "Select ${movie.title}",
+                            tint = if (isSelectedForDeletion) ElectricCyan else FrostWhite,
+                            modifier = Modifier.size(if (gridColumns >= 4) 13.dp else 16.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(overlayIconBoxSize)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(DeepBlack.copy(alpha = 0.65f))
+                            .clickable { onDeleteClick() }
+                            .testTag("home_dustbin_btn_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Remove ${movie.title}",
+                            tint = Color(0xFFFF6B6B),
+                            modifier = Modifier.size(if (gridColumns >= 4) 13.dp else 16.dp)
+                        )
+                    }
+                }
             }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                    .padding(horizontal = contentPad, vertical = contentPad)
             ) {
                 Text(
                     text = movie.title,
                     style = MaterialTheme.typography.titleSmall.copy(
-                        fontSize = 13.5.sp,
-                        lineHeight = 17.sp,
+                        fontSize = titleFontSize,
+                        lineHeight = (titleFontSize.value + 3f).sp,
                         fontWeight = FontWeight.Bold
                     ),
                     color = FrostWhite,
-                    maxLines = 2,
+                    maxLines = if (gridColumns >= 4) 1 else 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(if (gridColumns >= 4) 5.dp else 8.dp))
 
-                // Uniform Squircle Action Bar with clearly legible icon + text
+                // Adaptive Squircle Action Bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (gridColumns >= 4) 4.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Squircle Watched toggle
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(actionHeight)
                             .clip(actionSquircleShape)
                             .background(
-                                if (isWatched) Color(0xFF00F5D4).copy(alpha = 0.24f)
-                                else Color(0xFF17273B).copy(alpha = 0.92f)
+                                if (isWatched) Color(0xFF00F5D4).copy(alpha = (0.30f * opacityFactor).coerceIn(0f, 1f))
+                                else Color(0xFF17273B).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                             )
                             .drawWithContent {
                                 drawContent()
                                 val rPx = actionSquircleCorner.toPx()
                                 val sw = 1.15.dp.toPx()
                                 drawRoundRect(
-                                    color = if (isWatched) Color(0xFF00F5D4) else IcyBlue.copy(alpha = 0.42f),
+                                    color = if (isWatched) Color(0xFF00F5D4).copy(alpha = rimFactor) else IcyBlue.copy(alpha = 0.42f * rimFactor),
                                     topLeft = Offset(sw / 2f, sw / 2f),
                                     size = Size(size.width - sw, size.height - sw),
                                     cornerRadius = CornerRadius(rPx, rPx),
@@ -386,7 +682,7 @@ fun WaterfallWatchlistCard(
                                 )
                             }
                             .clickable { onMarkWatched() }
-                            .padding(horizontal = 8.dp)
+                            .padding(horizontal = if (gridColumns >= 4) 2.dp else 8.dp)
                             .testTag("card_watched_btn_${movie.id}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -398,38 +694,40 @@ fun WaterfallWatchlistCard(
                                 imageVector = if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
                                 contentDescription = "Mark Watched",
                                 tint = if (isWatched) Color(0xFF00F5D4) else FrostWhite,
-                                modifier = Modifier.requiredSize(17.dp)
+                                modifier = Modifier.requiredSize(if (gridColumns >= 4) 13.dp else 17.dp)
                             )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "Watch",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                color = FrostWhite,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Clip
-                            )
+                            if (gridColumns <= 3) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Watch",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontSize = if (gridColumns == 3) 10.sp else 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    color = FrostWhite,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip
+                                )
+                            }
                         }
                     }
 
                     // Squircle Save / Saved toggle
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(actionHeight)
                             .clip(actionSquircleShape)
                             .background(
-                                if (isInWatchlist) sigColor.copy(alpha = 0.22f)
-                                else Color(0xFF17273B).copy(alpha = 0.92f)
+                                if (isInWatchlist) sigColor.copy(alpha = (0.28f * opacityFactor).coerceIn(0f, 1f))
+                                else Color(0xFF17273B).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                             )
                             .drawWithContent {
                                 drawContent()
                                 val rPx = actionSquircleCorner.toPx()
                                 val sw = 1.15.dp.toPx()
                                 drawRoundRect(
-                                    color = if (isInWatchlist) ElectricCyan else IcyBlue.copy(alpha = 0.42f),
+                                    color = if (isInWatchlist) ElectricCyan.copy(alpha = rimFactor) else IcyBlue.copy(alpha = 0.42f * rimFactor),
                                     topLeft = Offset(sw / 2f, sw / 2f),
                                     size = Size(size.width - sw, size.height - sw),
                                     cornerRadius = CornerRadius(rPx, rPx),
@@ -444,7 +742,7 @@ fun WaterfallWatchlistCard(
                             imageVector = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                             contentDescription = if (isInWatchlist) "Saved in Watchlist" else "Save to Watchlist",
                             tint = if (isInWatchlist) ElectricCyan else FrostWhite,
-                            modifier = Modifier.requiredSize(20.dp)
+                            modifier = Modifier.requiredSize(if (gridColumns >= 4) 14.dp else 20.dp)
                         )
                     }
                 }
@@ -460,6 +758,9 @@ fun WaterfallWatchlistCard(
 fun PlasmaMoodTriggerButton(
     onClick: () -> Unit
 ) {
+    val glassTransparency = com.example.ui.theme.LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
     val infiniteTransition = rememberInfiniteTransition(label = "plasma_trigger")
     val breathAlpha by infiniteTransition.animateFloat(
         initialValue = 0.55f,
@@ -497,9 +798,9 @@ fun PlasmaMoodTriggerButton(
             drawRoundRect(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFFD500F9).copy(alpha = 0.45f * breathAlpha),
-                        Color(0xFF00E5FF).copy(alpha = 0.28f * breathAlpha),
-                        Color(0xFF0A111D)
+                        Color(0xFFD500F9).copy(alpha = 0.45f * breathAlpha * opacityFactor),
+                        Color(0xFF00E5FF).copy(alpha = 0.28f * breathAlpha * opacityFactor),
+                        Color(0xFF0A111D).copy(alpha = 0.94f * opacityFactor)
                     ),
                     center = center,
                     radius = size.maxDimension * 0.72f
@@ -508,13 +809,14 @@ fun PlasmaMoodTriggerButton(
             )
             rotate(rotAngle, pivot = center) {
                 val sw = 2.dp.toPx()
+                val effRim = breathAlpha * rimFactor
                 drawRoundRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFF00F5D4).copy(alpha = breathAlpha),
-                            Color(0xFF00E5FF).copy(alpha = breathAlpha),
-                            Color(0xFFD500F9).copy(alpha = breathAlpha),
-                            Color(0xFF4361EE).copy(alpha = breathAlpha)
+                            Color(0xFF00F5D4).copy(alpha = effRim),
+                            Color(0xFF00E5FF).copy(alpha = effRim),
+                            Color(0xFFD500F9).copy(alpha = effRim),
+                            Color(0xFF4361EE).copy(alpha = effRim)
                         ),
                         start = Offset(0f, 0f),
                         end = Offset(size.width, size.height)

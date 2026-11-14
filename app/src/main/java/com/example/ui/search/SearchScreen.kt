@@ -60,13 +60,11 @@ fun SearchScreen(
     val repository = remember { CineverseRepository(context) }
     val coroutineScope = rememberCoroutineScope()
     val socialDiscoveries by repository.socialDiscoveries.collectAsStateWithLifecycle()
+    val searchHistory by repository.searchHistory.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     var selectedContentType by remember { mutableStateOf("All") }
     var selectedGenre by remember { mutableStateOf("All") }
-    var searchHistory by remember {
-        mutableStateOf(emptyList<String>())
-    }
     var searchResults by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
@@ -138,7 +136,6 @@ fun SearchScreen(
                             rating = 8,
                             review = "Repeated mention in ${result.platform} link"
                         )
-                        onMarkWatched(m.movie)
                     }
                     updatedActionLog[m.movie.id] = "Watched"
                 }
@@ -158,14 +155,14 @@ fun SearchScreen(
         }
     }
 
-    // Real-time search OR automatic AI social link extraction when a link is pasted
+    // Real-time continuous letter-by-letter search (from 1st letter) OR automatic AI social link extraction when a link is pasted
     LaunchedEffect(query, selectedContentType, selectedGenre, isSocialUrl) {
         val trimmed = query.trim()
         if (isSocialUrl && trimmed.isNotEmpty()) {
             isSearching = false
             searchResults = emptyList()
             isExtractingSocial = true
-            delay(320)
+            delay(200)
             performSocialExtraction(trimmed, manualCaptionInput)
             return@LaunchedEffect
         }
@@ -176,24 +173,37 @@ fun SearchScreen(
             return@LaunchedEffect
         }
 
-        if (trimmed.length < 2 && selectedContentType == "All" && selectedGenre == "All") {
-            searchResults = emptyList()
-            isSearching = false
-            return@LaunchedEffect
+        // Clear any old social extraction list when typing a movie search query
+        if (!isSocialUrl && trimmed.isNotEmpty()) {
+            extractedMentions = emptyList()
+            socialExtractionResult = null
         }
 
-        isSearching = true
+        // 1. Instant 0ms prefix & word-prefix match from the very first letter ('i', 'in', 'int', 'f', 't', etc.)
+        val instantMatches = repository.searchInstantPrefix(trimmed, selectedContentType, selectedGenre)
+        searchResults = instantMatches
         searchError = null
-        delay(260)
+
+        // 2. Continuous live internet search merged smoothly as the user types letter-by-letter
+        isSearching = true
+        delay(120)
 
         try {
-            val results = repository.searchRealTime(trimmed, selectedContentType, selectedGenre)
-            searchResults = results
+            val live = repository.searchRealTime(trimmed, selectedContentType, selectedGenre)
+            val combined = (live + instantMatches).distinctBy { it.title.lowercase() }
+            searchResults = combined
         } catch (e: Exception) {
-            searchError = e.localizedMessage ?: "Network search error"
-            searchResults = emptyList()
+            if (instantMatches.isEmpty()) {
+                searchError = e.localizedMessage ?: "Network search error"
+            }
         } finally {
             isSearching = false
+        }
+
+        // Automatically record non-trivial search queries into persistent Search History after user pauses typing
+        if (trimmed.length >= 3 && !isSocialUrl) {
+            delay(1200)
+            repository.addSearchHistory(trimmed)
         }
     }
 
@@ -201,7 +211,6 @@ fun SearchScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(bottom = 100.dp)
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(12.dp))
@@ -600,6 +609,7 @@ fun SearchScreen(
         if (activeMentions.isNotEmpty()) {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 110.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(activeMentions, key = { it.id }) { mention ->
@@ -636,7 +646,6 @@ fun SearchScreen(
                         },
                         onMarkWatched = {
                             repository.markWatched(mention.movie, rating = 8, review = "Discovered via ${socialExtractionResult?.platform ?: "Social Link"}")
-                            onMarkWatched(mention.movie)
                             val updated = mentionActionLog + (mention.movie.id to "Watched")
                             mentionActionLog = updated
                             socialExtractionResult?.let { repository.saveSocialDiscovery(it, updated) }
@@ -708,7 +717,9 @@ fun SearchScreen(
                 }
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 110.dp),
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     items(searchResults) { movie ->
                         val existingItem = userLibrary.find { it.id == movie.id || it.title.equals(movie.title, ignoreCase = true) }
@@ -717,20 +728,27 @@ fun SearchScreen(
                             movie = existingItem ?: movie,
                             isSaved = isSaved,
                             onClick = {
-                                if (query.isNotBlank() && !searchHistory.contains(query)) {
-                                    searchHistory = listOf(query) + searchHistory.take(5)
+                                if (query.isNotBlank() && !isSocialUrl) {
+                                    repository.addSearchHistory(query.trim())
+                                } else {
+                                    repository.addSearchHistory(movie.title)
                                 }
                                 onMovieClick(existingItem ?: movie)
                             },
                             onAdd = {
+                                if (query.isNotBlank() && !isSocialUrl) {
+                                    repository.addSearchHistory(query.trim())
+                                }
                                 repository.addToWatchlist(existingItem ?: movie)
                                 onAddToWatchlist(existingItem ?: movie)
                             },
                             onMarkWatched = {
+                                if (query.isNotBlank() && !isSocialUrl) {
+                                    repository.addSearchHistory(query.trim())
+                                }
                                 val target = existingItem ?: movie
                                 val r = if (target.userRating > 0) target.userRating else 8
                                 repository.markWatched(target, rating = r, review = target.userReview)
-                                onMarkWatched(target)
                             },
                             onIncrementRewatch = {
                                 val target = existingItem ?: movie
@@ -753,67 +771,102 @@ fun SearchScreen(
                 }
             }
         } else {
-            // Zero-State: Search History & Sample Social URLs / Queries
-            Column {
-                if (searchHistory.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Recent Searches", style = MaterialTheme.typography.titleMedium, color = FrostWhite)
-                        TextButton(onClick = { searchHistory = emptyList() }) {
-                            Text("Clear All", color = SteelBlue)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        searchHistory.forEach { item ->
-                            GlassPillButton(
-                                text = item,
-                                onClick = { query = item }
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(20.dp))
-                }
-
-                GlassCard(
+            // Zero-State: Persistent Search History Chips & Link Extractor Prompt
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 22.dp
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.MovieFilter,
-                            contentDescription = "Search or Paste Link",
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Search History",
                             tint = ElectricCyan,
-                            modifier = Modifier.size(38.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Search Any Movie or Paste Your Own Link",
+                            text = "Search History",
                             style = MaterialTheme.typography.titleMedium,
                             color = FrostWhite
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Type a movie title in the search bar above, or paste your own YouTube, Instagram, Reddit, or article URL to extract titles with AI.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SteelBlue,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
                     }
+                    if (searchHistory.isNotEmpty()) {
+                        TextButton(
+                            onClick = { repository.clearSearchHistory() },
+                            modifier = Modifier.testTag("clear_search_history_button")
+                        ) {
+                            Text("Clear All", color = ElectricCyan)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (searchHistory.isEmpty()) {
+                    Text(
+                        text = "Your recent movie searches will appear here for one-tap access.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SteelBlue
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                } else {
+                    val histOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        searchHistory.forEach { item ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MidnightNavy.copy(alpha = (0.85f * histOpacity).coerceIn(0f, 1f)))
+                                    .border(1.dp, ElectricCyan.copy(alpha = (0.35f * (0.25f + 0.75f * histOpacity)).coerceIn(0f, 1f)), RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        query = item
+                                        repository.addSearchHistory(item)
+                                    }
+                                    .padding(start = 12.dp, end = 6.dp, top = 7.dp, bottom = 7.dp)
+                                    .testTag("search_history_chip_$item"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = IcyBlue,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = item,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = FrostWhite,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { repository.removeSearchHistoryItem(item) }
+                                        .testTag("delete_history_chip_$item"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Delete $item",
+                                        tint = SteelBlue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
                 }
             }
         }
@@ -1029,6 +1082,8 @@ fun SearchResultCard(
         mutableStateOf(if (movie.userRating > 0) movie.userRating.toFloat() else 8f)
     }
 
+    val cardOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
+
     GlassCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -1043,7 +1098,7 @@ fun SearchResultCard(
                 signatureColorHex = movie.signatureColorHex,
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
-                alpha = 0.16f,
+                alpha = 0.16f * cardOpacity,
                 showFallbackTitle = false,
                 releaseYear = movie.releaseYear,
                 movieId = movie.id
@@ -1055,9 +1110,9 @@ fun SearchResultCard(
                     .background(
                         Brush.horizontalGradient(
                             listOf(
-                                MidnightNavy.copy(alpha = 0.95f),
-                                MidnightNavy.copy(alpha = 0.85f),
-                                sigColor.copy(alpha = 0.12f)
+                                MidnightNavy.copy(alpha = (0.95f * cardOpacity).coerceIn(0f, 1f)),
+                                MidnightNavy.copy(alpha = (0.85f * cardOpacity).coerceIn(0f, 1f)),
+                                sigColor.copy(alpha = (0.12f * cardOpacity).coerceIn(0f, 1f))
                             )
                         )
                     )

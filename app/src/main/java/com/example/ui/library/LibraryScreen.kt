@@ -11,21 +11,25 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -48,12 +52,20 @@ import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.FrostWhite
 import com.example.ui.theme.IcyBlue
 import com.example.ui.theme.MidnightNavy
-import com.example.ui.theme.MutedSlate
 import com.example.ui.theme.SteelBlue
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+
+enum class LibraryViewMode(val label: String, val icon: ImageVector) {
+    DETAIL("Detail View", Icons.Default.ViewAgenda),
+    LIST("List View", Icons.AutoMirrored.Filled.ViewList),
+    LARGE_ICONS("Large Icons", Icons.Default.GridView),
+    MEDIUM_ICONS("Medium Icons", Icons.Default.ViewModule),
+    SMALL_ICONS("Small Icons", Icons.Default.Apps)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +87,13 @@ fun LibraryScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showAdvancedFilterPanel by remember { mutableStateOf(false) }
 
+    // Windows-Style Multiple View Modes
+    var currentViewMode by remember { mutableStateOf(LibraryViewMode.DETAIL) }
+    var showViewModeBar by remember { mutableStateOf(false) }
+
+    // Single & Multi-Select Deletion with Confirmation
+    var selectedForDeletionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBatchDeleteConfirmDialog by remember { mutableStateOf(false) }
     var movieToRemove by remember { mutableStateOf<MovieItem?>(null) }
     var rewatchTargetMovie by remember { mutableStateOf<MovieItem?>(null) }
 
@@ -94,12 +113,11 @@ fun LibraryScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(bottom = 100.dp)
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Title Header + Multi-Dimension Filter Toggle (No duplicate Search icon)
+        // Title Header + Windows View Mode Button Beside Filter Toggle
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -118,7 +136,7 @@ fun LibraryScreen(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${filteredMovies.size} of ${userLibrary.size} titles matching criteria",
+                    text = "${filteredMovies.size} of ${userLibrary.size} titles matching criteria • ${currentViewMode.label}",
                     style = MaterialTheme.typography.bodySmall,
                     color = SteelBlue,
                     maxLines = 1,
@@ -127,19 +145,114 @@ fun LibraryScreen(
                 )
             }
 
-            GlassIconButton(
-                icon = Icons.Default.Tune,
-                contentDescription = "Filters & Sort",
-                size = 44.dp,
-                tint = if (filterCriteria.hasActiveFilters() || showAdvancedFilterPanel) ElectricCyan else FrostWhite,
-                onClick = { showAdvancedFilterPanel = !showAdvancedFilterPanel },
-                modifier = Modifier.testTag("toggle_library_filters_btn")
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // View Mode Button right beside Filter button
+                GlassIconButton(
+                    icon = currentViewMode.icon,
+                    contentDescription = "Change View Mode (${currentViewMode.label})",
+                    size = 44.dp,
+                    tint = if (showViewModeBar || currentViewMode != LibraryViewMode.DETAIL) ElectricCyan else FrostWhite,
+                    onClick = { showViewModeBar = !showViewModeBar },
+                    modifier = Modifier.testTag("toggle_library_view_mode_btn")
+                )
+
+                GlassIconButton(
+                    icon = Icons.Default.Tune,
+                    contentDescription = "Filters & Sort",
+                    size = 44.dp,
+                    tint = if (filterCriteria.hasActiveFilters() || showAdvancedFilterPanel) ElectricCyan else FrostWhite,
+                    onClick = { showAdvancedFilterPanel = !showAdvancedFilterPanel },
+                    modifier = Modifier.testTag("toggle_library_filters_btn")
+                )
+            }
+        }
+
+        // Windows-Style View Mode Switcher Bar
+        AnimatedVisibility(
+            visible = showViewModeBar,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .horizontalScroll(rememberScrollState())
+                    .testTag("library_view_mode_bar"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LibraryViewMode.entries.forEach { mode ->
+                    GlassPillButton(
+                        text = mode.label,
+                        icon = mode.icon,
+                        compact = true,
+                        isActive = currentViewMode == mode,
+                        onClick = { currentViewMode = mode },
+                        modifier = Modifier.testTag("library_view_mode_${mode.name.lowercase()}")
+                    )
+                }
+            }
+        }
+
+        // Batch Multi-Select Deletion Action Bar
+        AnimatedVisibility(
+            visible = selectedForDeletionIds.isNotEmpty(),
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .testTag("library_batch_delete_bar"),
+                cornerRadius = 16.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${selectedForDeletionIds.size} selected",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = FrostWhite
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = {
+                                selectedForDeletionIds = filteredMovies.map { it.id }.toSet()
+                            }
+                        ) {
+                            Text("Select All", color = IcyBlue, fontSize = 12.sp)
+                        }
+                        TextButton(
+                            onClick = { selectedForDeletionIds = emptySet() }
+                        ) {
+                            Text("Clear", color = SteelBlue, fontSize = 12.sp)
+                        }
+                        GlassPillButton(
+                            text = "Delete (${selectedForDeletionIds.size})",
+                            icon = Icons.Default.DeleteOutline,
+                            compact = true,
+                            isActive = true,
+                            onClick = { showBatchDeleteConfirmDialog = true },
+                            modifier = Modifier.testTag("lib_delete_selected_btn")
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         // In-Library Filter Input
+        val libOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -159,8 +272,8 @@ fun LibraryScreen(
                 .testTag("library_filter_text_input"),
             shape = RoundedCornerShape(22.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MidnightNavy.copy(alpha = 0.5f),
-                unfocusedContainerColor = MidnightNavy.copy(alpha = 0.3f),
+                focusedContainerColor = MidnightNavy.copy(alpha = (0.75f * libOpacity).coerceIn(0f, 1f)),
+                unfocusedContainerColor = MidnightNavy.copy(alpha = (0.55f * libOpacity).coerceIn(0f, 1f)),
                 focusedBorderColor = ElectricCyan,
                 unfocusedBorderColor = SteelBlue.copy(alpha = 0.4f),
                 focusedTextColor = FrostWhite,
@@ -171,7 +284,7 @@ fun LibraryScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Status Tabs: All, Watchlist, Watched, Dropped
+        // Status Tabs: Watchlist, Watched, Dropped, All
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -199,7 +312,7 @@ fun LibraryScreen(
             }
         }
 
-        // PHASE 6 SECTION 8 — COMPREHENSIVE 9-DIMENSION MOVIE FILTERS & SORT PANEL
+        // COMPREHENSIVE 9-DIMENSION MOVIE FILTERS & SORT PANEL
         AnimatedVisibility(
             visible = showAdvancedFilterPanel,
             enter = expandVertically() + fadeIn(),
@@ -291,29 +404,83 @@ fun LibraryScreen(
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    items(filteredMovies, key = { it.id }) { movie ->
-                        LibraryItemCard(
-                            movie = movie,
-                            onClick = { onMovieClick(movie) },
-                            onMoveWatched = { onUpdateStatus(movie.id, "Watched") },
-                            onMoveWatchlist = { onUpdateStatus(movie.id, "Watchlist") },
-                            onMoveDropped = { onUpdateStatus(movie.id, "Dropped") },
-                            onRewatch = { rewatchTargetMovie = movie },
-                            onSliderRatingChange = { newRating ->
-                                onUpdateRating(movie.id, newRating)
-                            },
-                            onRemove = { movieToRemove = movie }
-                        )
+                when (currentViewMode) {
+                    LibraryViewMode.DETAIL, LibraryViewMode.LIST -> {
+                        val isCompactList = currentViewMode == LibraryViewMode.LIST
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 110.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (isCompactList) 8.dp else 14.dp)
+                        ) {
+                            items(filteredMovies, key = { it.id }) { movie ->
+                                val isChecked = movie.id in selectedForDeletionIds
+                                LibraryItemCard(
+                                    movie = movie,
+                                    isCompactList = isCompactList,
+                                    isSelectedForDeletion = isChecked,
+                                    onToggleSelectForDeletion = {
+                                        selectedForDeletionIds = if (isChecked) {
+                                            selectedForDeletionIds - movie.id
+                                        } else {
+                                            selectedForDeletionIds + movie.id
+                                        }
+                                    },
+                                    onClick = { onMovieClick(movie) },
+                                    onMoveWatched = { onUpdateStatus(movie.id, "Watched") },
+                                    onMoveWatchlist = { onUpdateStatus(movie.id, "Watchlist") },
+                                    onMoveDropped = { onUpdateStatus(movie.id, "Dropped") },
+                                    onRewatch = { rewatchTargetMovie = movie },
+                                    onSliderRatingChange = { newRating ->
+                                        onUpdateRating(movie.id, newRating)
+                                    },
+                                    onRemove = { movieToRemove = movie }
+                                )
+                            }
+                        }
+                    }
+                    LibraryViewMode.LARGE_ICONS, LibraryViewMode.MEDIUM_ICONS, LibraryViewMode.SMALL_ICONS -> {
+                        val columns = when (currentViewMode) {
+                            LibraryViewMode.LARGE_ICONS -> 2
+                            LibraryViewMode.MEDIUM_ICONS -> 3
+                            LibraryViewMode.SMALL_ICONS -> 4
+                            else -> 2
+                        }
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("library_icon_grid_$columns"),
+                            contentPadding = PaddingValues(bottom = 110.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(filteredMovies, key = { it.id }) { movie ->
+                                val isChecked = movie.id in selectedForDeletionIds
+                                LibraryIconGridCard(
+                                    movie = movie,
+                                    columns = columns,
+                                    isSelectedForDeletion = isChecked,
+                                    onToggleSelectForDeletion = {
+                                        selectedForDeletionIds = if (isChecked) {
+                                            selectedForDeletionIds - movie.id
+                                        } else {
+                                            selectedForDeletionIds + movie.id
+                                        }
+                                    },
+                                    onClick = { onMovieClick(movie) },
+                                    onMoveWatched = { onUpdateStatus(movie.id, "Watched") },
+                                    onMoveWatchlist = { onUpdateStatus(movie.id, "Watchlist") },
+                                    onRemove = { movieToRemove = movie }
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    // Single Movie Delete Confirmation Dialog
     if (movieToRemove != null) {
         val target = movieToRemove!!
         AlertDialog(
@@ -331,15 +498,51 @@ fun LibraryScreen(
                 Button(
                     onClick = {
                         onRemoveMovie(target.id)
+                        selectedForDeletionIds = selectedForDeletionIds - target.id
                         movieToRemove = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                    modifier = Modifier.testTag("confirm_remove_movie_btn")
                 ) {
                     Text("Remove", color = Color.White)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { movieToRemove = null }) {
+                    Text("Cancel", color = FrostWhite)
+                }
+            }
+        )
+    }
+
+    // Batch Multi-Select Delete Confirmation Dialog
+    if (showBatchDeleteConfirmDialog && selectedForDeletionIds.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirmDialog = false },
+            containerColor = MidnightNavy,
+            title = { Text("Remove ${selectedForDeletionIds.size} Selected Title(s)?", color = FrostWhite) },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove the ${selectedForDeletionIds.size} selected movie(s) from your library?",
+                    color = SteelBlue,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.removeMultipleFromLibrary(selectedForDeletionIds)
+                        selectedForDeletionIds = emptySet()
+                        showBatchDeleteConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                    modifier = Modifier.testTag("confirm_batch_remove_btn")
+                ) {
+                    Text("Delete Selected", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteConfirmDialog = false }) {
                     Text("Cancel", color = FrostWhite)
                 }
             }
@@ -428,7 +631,172 @@ fun LibraryScreen(
 }
 
 /**
- * PHASE 6 SECTION 8 — MULTI-DIMENSION MOVIE FILTERS & SORT PANEL
+ * Windows-Style Icon Grid Card (Large Icons = 2 cols, Medium Icons = 3 cols, Small Icons = 4 cols)
+ */
+@Composable
+fun LibraryIconGridCard(
+    movie: MovieItem,
+    columns: Int,
+    isSelectedForDeletion: Boolean,
+    onToggleSelectForDeletion: () -> Unit,
+    onClick: () -> Unit,
+    onMoveWatched: () -> Unit,
+    onMoveWatchlist: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val isWatched = movie.userStatus.equals("Watched", ignoreCase = true)
+    val isInWatchlist = movie.userStatus.equals("Watchlist", ignoreCase = true) || movie.userStatus.isBlank()
+    val btnOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
+    val titleFontSize = when (columns) {
+        2 -> 13.5.sp
+        3 -> 11.5.sp
+        else -> 10.sp
+    }
+    val actionHeight = when (columns) {
+        2 -> 36.dp
+        3 -> 30.dp
+        else -> 26.dp
+    }
+
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("library_item_card_${movie.id}"),
+        cornerRadius = if (columns >= 4) 12.dp else 16.dp,
+        onClick = onClick
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.68f)
+            ) {
+                MoviePosterImage(
+                    posterUrl = movie.posterUrl,
+                    title = movie.title,
+                    signatureColorHex = movie.signatureColorHex,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    releaseYear = movie.releaseYear,
+                    movieId = movie.id
+                )
+
+                // Top-left selection checkbox + Top-right small dustbin icon
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DeepBlack.copy(alpha = 0.65f))
+                            .clickable { onToggleSelectForDeletion() }
+                            .testTag("lib_select_checkbox_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isSelectedForDeletion) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                            contentDescription = "Select ${movie.title}",
+                            tint = if (isSelectedForDeletion) ElectricCyan else FrostWhite,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DeepBlack.copy(alpha = 0.65f))
+                            .clickable { onRemove() }
+                            .testTag("lib_dustbin_btn_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Delete ${movie.title}",
+                            tint = Color(0xFFFF6B6B),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (columns >= 4) 6.dp else 8.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = movie.title,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = titleFontSize,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = FrostWhite,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(actionHeight)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isInWatchlist) ElectricCyan.copy(alpha = (0.30f * btnOpacity).coerceIn(0f, 1f))
+                                else Color(0xFF15253A).copy(alpha = (0.90f * btnOpacity).coerceIn(0f, 1f))
+                            )
+                            .clickable { onMoveWatchlist() }
+                            .testTag("lib_watchlist_btn_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            contentDescription = "Watchlist",
+                            tint = if (isInWatchlist) ElectricCyan else FrostWhite,
+                            modifier = Modifier.size(if (columns >= 4) 13.dp else 16.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(actionHeight)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isWatched) Color(0xFF00F5D4).copy(alpha = (0.30f * btnOpacity).coerceIn(0f, 1f))
+                                else Color(0xFF15253A).copy(alpha = (0.90f * btnOpacity).coerceIn(0f, 1f))
+                            )
+                            .clickable { onMoveWatched() }
+                            .testTag("lib_watched_btn_${movie.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                            contentDescription = "Watched",
+                            tint = if (isWatched) Color(0xFF00F5D4) else FrostWhite,
+                            modifier = Modifier.size(if (columns >= 4) 13.dp else 16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * MULTI-DIMENSION MOVIE FILTERS & SORT PANEL
  */
 @Composable
 fun MovieFiltersPanel(
@@ -545,7 +913,7 @@ fun MovieFiltersPanel(
                 }
             )
 
-            // 7. My Rating (Personal Rating Only — Zero Public Ratings)
+            // 7. My Rating
             val ratingLabel = when {
                 criteria.minPersonalRating >= 9 -> "My Rating 9+"
                 criteria.minPersonalRating >= 8 -> "My Rating 8+"
@@ -588,6 +956,7 @@ private fun FilterChipRow(
     selected: String,
     onSelect: (String) -> Unit
 ) {
+    val chipOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
@@ -608,8 +977,8 @@ private fun FilterChipRow(
                         .heightIn(min = 38.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
-                            if (isSelected) ElectricCyan.copy(alpha = 0.25f)
-                            else Color(0xFF132235)
+                            if (isSelected) ElectricCyan.copy(alpha = (0.34f * chipOpacity).coerceIn(0f, 1f))
+                            else Color(0xFF132235).copy(alpha = (0.92f * chipOpacity).coerceIn(0f, 1f))
                         )
                         .border(
                             1.dp,
@@ -633,13 +1002,17 @@ private fun FilterChipRow(
 }
 
 /**
- * Library Movie Card with:
- * - Three buttons directly below the movie name: Watchlist, Watched, and Rewatch (with the number inside the button).
+ * Library Movie Card supporting Detail View & Compact List View, plus:
+ * - Small Dustbin Icon & Selection Checkbox for fast single or multi-select removal with confirmation.
+ * - Three buttons directly below the movie name: Watchlist, Watched, and Rewatch.
  * - Inline 1-to-10 Rating Slider that ONLY appears when Watched is clicked (`isWatched == true`).
  */
 @Composable
 fun LibraryItemCard(
     movie: MovieItem,
+    isCompactList: Boolean = false,
+    isSelectedForDeletion: Boolean = false,
+    onToggleSelectForDeletion: () -> Unit = {},
     onClick: () -> Unit,
     onMoveWatched: () -> Unit,
     onMoveWatchlist: () -> Unit,
@@ -660,29 +1033,29 @@ fun LibraryItemCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("library_item_card_${movie.id}"),
-        cornerRadius = 22.dp,
+        cornerRadius = if (isCompactList) 16.dp else 22.dp,
         onClick = onClick
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.Top
+                .padding(if (isCompactList) 8.dp else 12.dp),
+            verticalAlignment = if (isCompactList) Alignment.CenterVertically else Alignment.Top
         ) {
             MoviePosterImage(
                 posterUrl = movie.posterUrl,
                 title = movie.title,
                 signatureColorHex = movie.signatureColorHex,
                 modifier = Modifier
-                    .width(90.dp)
-                    .height(136.dp)
-                    .clip(RoundedCornerShape(16.dp)),
+                    .width(if (isCompactList) 54.dp else 90.dp)
+                    .height(if (isCompactList) 80.dp else 136.dp)
+                    .clip(RoundedCornerShape(if (isCompactList) 10.dp else 16.dp)),
                 contentScale = ContentScale.Crop,
                 releaseYear = movie.releaseYear,
                 movieId = movie.id
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(if (isCompactList) 10.dp else 12.dp))
 
             Column(
                 modifier = Modifier.weight(1f)
@@ -694,47 +1067,82 @@ fun LibraryItemCard(
                 ) {
                     Text(
                         text = movie.title.uppercase(),
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = if (isCompactList) 13.5.sp else 15.sp),
                         color = FrostWhite,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
 
-                    Box {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        // Selection Checkbox for multi-delete
                         IconButton(
-                            onClick = { showMenu = true },
-                            modifier = Modifier.size(26.dp)
+                            onClick = onToggleSelectForDeletion,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("lib_select_checkbox_${movie.id}")
                         ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = SteelBlue, modifier = Modifier.size(17.dp))
+                            Icon(
+                                imageVector = if (isSelectedForDeletion) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                contentDescription = "Select ${movie.title}",
+                                tint = if (isSelectedForDeletion) ElectricCyan else SteelBlue,
+                                modifier = Modifier.size(17.dp)
+                            )
                         }
 
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false },
-                            modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                        // Small Dustbin Icon for direct fast removal
+                        IconButton(
+                            onClick = onRemove,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("lib_dustbin_btn_${movie.id}")
                         ) {
-                            if (!movie.userStatus.equals("Dropped", true)) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete ${movie.title}",
+                                tint = Color(0xFFFF6B6B),
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { showMenu = true },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = SteelBlue, modifier = Modifier.size(17.dp))
+                            }
+
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false },
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                            ) {
+                                if (!movie.userStatus.equals("Dropped", true)) {
+                                    DropdownMenuItem(
+                                        text = { Text("Move to Dropped") },
+                                        onClick = {
+                                            showMenu = false
+                                            onMoveDropped()
+                                        }
+                                    )
+                                }
                                 DropdownMenuItem(
-                                    text = { Text("Move to Dropped") },
+                                    text = { Text("Remove from Library", color = Color(0xFFFF5252)) },
                                     onClick = {
                                         showMenu = false
-                                        onMoveDropped()
+                                        onRemove()
                                     }
                                 )
                             }
-                            DropdownMenuItem(
-                                text = { Text("Remove from Library", color = Color(0xFFFF5252)) },
-                                onClick = {
-                                    showMenu = false
-                                    onRemove()
-                                }
-                            )
                         }
                     }
                 }
 
-                if (movie.inlineQuote.text.isNotBlank()) {
+                if (!isCompactList && movie.inlineQuote.text.isNotBlank()) {
                     Text(
                         text = "“${movie.inlineQuote.text}”",
                         style = MaterialTheme.typography.bodySmall.copy(
@@ -755,12 +1163,11 @@ fun LibraryItemCard(
                     color = SteelBlue
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(if (isCompactList) 6.dp else 8.dp))
 
-                // THREE SQUIRCLE ACTION BUTTONS DIRECTLY BELOW MOVIE NAME:
-                // 1. Save / Saved
-                // 2. Watch / Watched
-                // 3. Rewatch Squircle Counter
+                val btnOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
+                val btnRim = (0.25f + 0.75f * btnOpacity).coerceIn(0f, 1f)
+                val btnMinHeight = if (isCompactList) 36.dp else 44.dp
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -770,19 +1177,19 @@ fun LibraryItemCard(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 44.dp)
+                            .heightIn(min = btnMinHeight)
                             .clip(RoundedCornerShape(14.dp))
                             .background(
-                                if (isInWatchlist) ElectricCyan.copy(alpha = 0.25f)
-                                else Color(0xFF15253A)
+                                if (isInWatchlist) ElectricCyan.copy(alpha = (0.32f * btnOpacity).coerceIn(0f, 1f))
+                                else Color(0xFF15253A).copy(alpha = (0.94f * btnOpacity).coerceIn(0f, 1f))
                             )
                             .border(
                                 1.1.dp,
-                                if (isInWatchlist) ElectricCyan else IcyBlue.copy(alpha = 0.34f),
+                                if (isInWatchlist) ElectricCyan.copy(alpha = btnRim) else IcyBlue.copy(alpha = 0.34f * btnRim),
                                 RoundedCornerShape(14.dp)
                             )
                             .clickable { onMoveWatchlist() }
-                            .padding(horizontal = 8.dp, vertical = 8.dp)
+                            .padding(horizontal = 8.dp, vertical = if (isCompactList) 5.dp else 8.dp)
                             .testTag("lib_watchlist_btn_${movie.id}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -817,19 +1224,19 @@ fun LibraryItemCard(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 44.dp)
+                            .heightIn(min = btnMinHeight)
                             .clip(RoundedCornerShape(14.dp))
                             .background(
-                                if (isWatched) Color(0xFF00F5D4).copy(alpha = 0.25f)
-                                else Color(0xFF15253A)
+                                if (isWatched) Color(0xFF00F5D4).copy(alpha = (0.32f * btnOpacity).coerceIn(0f, 1f))
+                                else Color(0xFF15253A).copy(alpha = (0.94f * btnOpacity).coerceIn(0f, 1f))
                             )
                             .border(
                                 1.1.dp,
-                                if (isWatched) Color(0xFF00F5D4) else IcyBlue.copy(alpha = 0.34f),
+                                if (isWatched) Color(0xFF00F5D4).copy(alpha = btnRim) else IcyBlue.copy(alpha = 0.34f * btnRim),
                                 RoundedCornerShape(14.dp)
                             )
                             .clickable { onMoveWatched() }
-                            .padding(horizontal = 8.dp, vertical = 8.dp)
+                            .padding(horizontal = 8.dp, vertical = if (isCompactList) 5.dp else 8.dp)
                             .testTag("lib_watched_btn_${movie.id}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -863,7 +1270,7 @@ fun LibraryItemCard(
                     // 3. Rewatch Squircle Button with the number inside it
                     RewatchSymbolCounterButton(
                         rewatchCount = if (isWatched) movie.rewatchCount.coerceAtLeast(1) else 0,
-                        size = 44.dp,
+                        size = btnMinHeight,
                         accentColor = ElectricCyan,
                         testTagName = "lib_rewatch_btn_${movie.id}",
                         isWatched = isWatched,
@@ -877,10 +1284,9 @@ fun LibraryItemCard(
                     )
                 }
 
-                // STRICT COMMON-SENSE RULE:
-                // Only when Watched is clicked (`isWatched == true`) does the 1-to-10 Rating Slider show up!
+                // Only when Watched is clicked (`isWatched == true`) does the 1-to-10 Rating Slider show up
                 AnimatedVisibility(
-                    visible = isWatched,
+                    visible = isWatched && !isCompactList,
                     enter = expandVertically() + fadeIn(),
                     exit = shrinkVertically() + fadeOut()
                 ) {

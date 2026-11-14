@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Cineverse"
+rootProject.name = "CineMax"
 
 include(":app")

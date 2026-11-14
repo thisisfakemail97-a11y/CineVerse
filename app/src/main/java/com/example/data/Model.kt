@@ -202,6 +202,16 @@ data class DiaryEntry(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+data class MoviePlaylist(
+    val id: String = "",
+    val userId: String = "",
+    val name: String = "",
+    val description: String = "",
+    val movieIds: List<String> = emptyList(),
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 // ==================== PHASE 5: AI DISCOVERY, CONNECTIONS & SOCIAL EXTRACTION ====================
 
 data class AiRecommendationItem(

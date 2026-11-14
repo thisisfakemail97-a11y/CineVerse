@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.FrostWhite
 import com.example.ui.theme.IcyBlue
+import com.example.ui.theme.LocalGlassTransparency
 import com.example.ui.theme.MutedSlate
 import com.example.ui.theme.SteelBlue
 import kotlin.math.cos
@@ -89,6 +90,9 @@ fun RewatchSymbolCounterButton(
     testTag: String = "",
     onClick: () -> Unit
 ) {
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
     val effectiveSize = if (compact) size.coerceAtLeast(42.dp) else size.coerceAtLeast(46.dp)
     val effectiveTestTag = if (testTag.isNotBlank()) testTag else testTagName
     val infiniteTransition = rememberInfiniteTransition(label = "rewatch_breath")
@@ -115,13 +119,13 @@ fun RewatchSymbolCounterButton(
                 Brush.verticalGradient(
                     colors = if (isActive) {
                         listOf(
-                            accentColor.copy(alpha = 0.28f),
-                            Color(0xFF0E1D2F).copy(alpha = 0.92f)
+                            accentColor.copy(alpha = (0.36f * opacityFactor).coerceIn(0f, 1f)),
+                            Color(0xFF0E1D2F).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                         )
                     } else {
                         listOf(
-                            Color(0xFF1E324A).copy(alpha = 0.78f),
-                            Color(0xFF0C1624).copy(alpha = 0.90f)
+                            Color(0xFF1E324A).copy(alpha = (0.86f * opacityFactor).coerceIn(0f, 1f)),
+                            Color(0xFF0C1624).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                         )
                     }
                 )
@@ -130,12 +134,13 @@ fun RewatchSymbolCounterButton(
                 drawContent()
                 val strokeW = 1.35.dp.toPx()
                 val rPx = squircleCorner.toPx()
+                val effAlpha = breathAlpha * rimFactor
                 drawRoundRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = breathAlpha),
-                            ringColor.copy(alpha = breathAlpha),
-                            Color.White.copy(alpha = breathAlpha * 0.6f)
+                            Color.White.copy(alpha = effAlpha),
+                            ringColor.copy(alpha = effAlpha),
+                            Color.White.copy(alpha = effAlpha * 0.6f)
                         )
                     ),
                     topLeft = Offset(strokeW / 2f, strokeW / 2f),
@@ -214,6 +219,10 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
     onRewatchClick: () -> Unit,
     onRatingAndReviewSaved: (rating: Int, review: String) -> Unit
 ) {
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
+
     var sliderValue by remember(movieId, userRating, isWatched) {
         mutableStateOf(if (userRating > 0) userRating.toFloat() else 8f)
     }
@@ -252,15 +261,15 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
                         if (isWatchlist) {
                             Brush.horizontalGradient(
                                 listOf(
-                                    ElectricCyan.copy(alpha = 0.30f),
-                                    Color(0xFF153450).copy(alpha = 0.92f)
+                                    ElectricCyan.copy(alpha = (0.38f * opacityFactor).coerceIn(0f, 1f)),
+                                    Color(0xFF153450).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                                 )
                             )
                         } else {
                             Brush.horizontalGradient(
                                 listOf(
-                                    Color(0xFF1B2E44).copy(alpha = 0.78f),
-                                    Color(0xFF0E1928).copy(alpha = 0.88f)
+                                    Color(0xFF1B2E44).copy(alpha = (0.86f * opacityFactor).coerceIn(0f, 1f)),
+                                    Color(0xFF0E1928).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                                 )
                             )
                         }
@@ -270,7 +279,7 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
                         val strokeW = if (isWatchlist) 1.5.dp.toPx() else 1.2.dp.toPx()
                         val rPx = squircleCorner.toPx()
                         drawRoundRect(
-                            color = if (isWatchlist) ElectricCyan.copy(alpha = breathAlpha) else IcyBlue.copy(alpha = 0.38f * breathAlpha),
+                            color = if (isWatchlist) ElectricCyan.copy(alpha = breathAlpha * rimFactor) else IcyBlue.copy(alpha = 0.38f * breathAlpha * rimFactor),
                             topLeft = Offset(strokeW / 2f, strokeW / 2f),
                             size = Size(size.width - strokeW, size.height - strokeW),
                             cornerRadius = CornerRadius(rPx, rPx),
@@ -319,15 +328,15 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
                         if (isWatched) {
                             Brush.horizontalGradient(
                                 listOf(
-                                    Color(0xFF00F5D4).copy(alpha = 0.32f),
-                                    Color(0xFF103538).copy(alpha = 0.92f)
+                                    Color(0xFF00F5D4).copy(alpha = (0.40f * opacityFactor).coerceIn(0f, 1f)),
+                                    Color(0xFF103538).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                                 )
                             )
                         } else {
                             Brush.horizontalGradient(
                                 listOf(
-                                    Color(0xFF1B2E44).copy(alpha = 0.78f),
-                                    Color(0xFF0E1928).copy(alpha = 0.88f)
+                                    Color(0xFF1B2E44).copy(alpha = (0.86f * opacityFactor).coerceIn(0f, 1f)),
+                                    Color(0xFF0E1928).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
                                 )
                             )
                         }
@@ -337,7 +346,7 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
                         val strokeW = if (isWatched) 1.5.dp.toPx() else 1.2.dp.toPx()
                         val rPx = squircleCorner.toPx()
                         drawRoundRect(
-                            color = if (isWatched) Color(0xFF00F5D4).copy(alpha = breathAlpha) else IcyBlue.copy(alpha = 0.38f * breathAlpha),
+                            color = if (isWatched) Color(0xFF00F5D4).copy(alpha = breathAlpha * rimFactor) else IcyBlue.copy(alpha = 0.38f * breathAlpha * rimFactor),
                             topLeft = Offset(strokeW / 2f, strokeW / 2f),
                             size = Size(size.width - strokeW, size.height - strokeW),
                             cornerRadius = CornerRadius(rPx, rPx),
@@ -398,10 +407,10 @@ fun ThreeMovieStatusButtonsWithWatchedRating(
                     .fillMaxWidth()
                     .padding(top = 10.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF0B1726).copy(alpha = 0.78f))
+                    .background(Color(0xFF0B1726).copy(alpha = (0.88f * opacityFactor).coerceIn(0f, 1f)))
                     .border(
                         width = 1.dp,
-                        color = Color(0xFF00F5D4).copy(alpha = 0.38f),
+                        color = Color(0xFF00F5D4).copy(alpha = 0.38f * rimFactor),
                         shape = RoundedCornerShape(18.dp)
                     )
                     .padding(14.dp)

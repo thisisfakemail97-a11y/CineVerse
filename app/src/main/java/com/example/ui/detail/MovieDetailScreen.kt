@@ -96,6 +96,15 @@ fun MovieDetailScreen(
     val scrollState = rememberScrollState()
 
     val selectedRegion by repository.selectedRegion.collectAsStateWithLifecycle()
+    val playlists by repository.playlists.collectAsStateWithLifecycle()
+
+    val safeMovieId = remember(movie.id, movie.title) {
+        movie.id.ifBlank { "title_${movie.title.hashCode()}" }
+    }
+    val isInAnyPlaylist = remember(playlists, safeMovieId, movie.id) {
+        playlists.any { safeMovieId in it.movieIds || movie.id in it.movieIds }
+    }
+    var showAddToPlaylistDialog by remember { mutableStateOf(false) }
 
     var inWatchlistState by remember(movie.id, isInWatchlist) {
         mutableStateOf(isInWatchlist || movie.userStatus.equals("Watchlist", ignoreCase = true))
@@ -126,10 +135,9 @@ fun MovieDetailScreen(
         repository.resolveRegionalStreaming(movie, selectedRegion)
     }
 
-    // Resolved poster URL & Movie Connections
+    // Resolved poster URL
     var resolvedPosterUrl by remember(movie.id, movie.posterUrl) { mutableStateOf(movie.posterUrl) }
     var personPortraits by remember(movie.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var movieConnections by remember(movie.id) { mutableStateOf<List<MovieConnectionItem>>(emptyList()) }
 
     LaunchedEffect(movie.id, movie.title, movie.director, movie.mainCast) {
         if (resolvedPosterUrl.isBlank() || resolvedPosterUrl.contains("unsplash.com", ignoreCase = true)) {
@@ -146,7 +154,6 @@ fun MovieDetailScreen(
         if (namesToFetch.isNotEmpty()) {
             personPortraits = repository.fetchWikipediaPersonPortraits(namesToFetch)
         }
-        movieConnections = repository.getMovieConnections(movie)
     }
 
     val movieAuraColor = remember(movie.signatureColorHex) {
@@ -266,6 +273,16 @@ fun MovieDetailScreen(
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Symbol-only Add to Folder / Playlist button (no text label)
+                    GlassIconButton(
+                        icon = Icons.Default.CreateNewFolder,
+                        contentDescription = "Add to Folder",
+                        size = 46.dp,
+                        tint = if (isInAnyPlaylist) ElectricCyan else FrostWhite,
+                        onClick = { showAddToPlaylistDialog = true },
+                        modifier = Modifier.testTag("detail_add_to_folder_btn")
+                    )
+
                     GlassIconButton(
                         icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "Favorite",
@@ -420,7 +437,6 @@ fun MovieDetailScreen(
                                     if (rewatchCount < 1) rewatchCount = 1
                                     if (userRating < 1) userRating = 8
                                     repository.markWatched(movie, userRating, userReviewText)
-                                    onLogWatched(movie, userRating, userReviewText)
                                 } else {
                                     inWatchlistState = true
                                     repository.updateStatus(movie.id, "Watchlist")
@@ -433,7 +449,6 @@ fun MovieDetailScreen(
                                     rewatchCount = 1
                                     if (userRating < 1) userRating = 8
                                     repository.markWatched(movie, userRating, userReviewText)
-                                    onLogWatched(movie, userRating, userReviewText)
                                 } else {
                                     showRewatchDialog = true
                                 }
@@ -444,7 +459,6 @@ fun MovieDetailScreen(
                                 watchedState = true
                                 if (rewatchCount < 1) rewatchCount = 1
                                 repository.markWatched(movie, newRating, newReview)
-                                onLogWatched(movie, newRating, newReview)
                             }
                         )
                     }
@@ -598,37 +612,14 @@ fun MovieDetailScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                // 10. PHASE 6 SECTION 7 — WHERE TO WATCH (Region-Aware Streaming Availability)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Where to Watch",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = FrostWhite,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF142840))
-                            .border(1.dp, ElectricCyan.copy(alpha = 0.50f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                            .testTag("where_to_watch_region_badge")
-                    ) {
-                        Text(
-                            text = "Region: $selectedRegion",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ElectricCyan,
-                            maxLines = 1
-                        )
-                    }
-                }
+                // 10. WHERE TO WATCH (Streaming Availability)
+                Text(
+                    text = "Where to Watch",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FrostWhite,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(modifier = Modifier.height(10.dp))
 
                 GlassCard(
@@ -644,14 +635,14 @@ fun MovieDetailScreen(
                     ) {
                         if (regionalProviders.isEmpty()) {
                             Text(
-                                text = "Regional streaming availability is currently unverified for $selectedRegion. Use legitimate provider search below:",
+                                text = "Streaming availability is currently unverified. Use legitimate provider search below:",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = IcyBlue,
                                 modifier = Modifier.testTag("where_to_watch_unavailable_notice")
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                         } else {
-                            // Detailed verified regional provider list with Subscription vs Rent/Buy & Last Checked date
+                            // Detailed verified provider list with Subscription vs Rent/Buy & Last Checked date
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 regionalProviders.forEach { provider ->
                                     Row(
@@ -712,7 +703,7 @@ fun MovieDetailScreen(
                         ) {
                             GoogleAppIconBadge(
                                 onClick = {
-                                    val googleUrl = "https://www.google.com/search?q=" + Uri.encode("${movie.title} ${movie.releaseYear} watch online $selectedRegion")
+                                    val googleUrl = "https://www.google.com/search?q=" + Uri.encode("${movie.title} ${movie.releaseYear} watch online")
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(googleUrl)))
                                 }
                             )
@@ -749,7 +740,7 @@ fun MovieDetailScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // 12. Personalisation Feedback Controls (Phase 5 Section 9)
+                // 12. Personalisation Feedback Controls (Page ends cleanly here without Similar Movies)
                 Text("Personalise AI Taste Profile", style = MaterialTheme.typography.titleMedium, color = FrostWhite)
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
@@ -782,112 +773,194 @@ fun MovieDetailScreen(
                         color = movieAuraColor
                     )
                 }
-
-                // 13. Movie Connections (Phase 5 Section 6: Verified Factual vs AI-Assessed Creative Similarities)
-                val factualConnections = remember(movieConnections) {
-                    movieConnections.filter { it.connectionCategory == "FACTUAL" }
-                }
-                val creativeConnections = remember(movieConnections) {
-                    movieConnections.filter { it.connectionCategory == "CREATIVE" }
-                }
-
-                if (factualConnections.isNotEmpty() || creativeConnections.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(26.dp))
-                    Text(
-                        text = "Movie Connections",
-                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-                        color = FrostWhite
-                    )
-                    Text(
-                        text = "Tap any connected title to explore its detail page directly",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SteelBlue
-                    )
-
-                    if (factualConnections.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xFF00F5D4).copy(alpha = 0.18f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "VERIFIED FACTUAL CONNECTIONS",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color(0xFF00F5D4)
-                                )
-                            }
-                            Text(
-                                text = "Director • Cast • Writer • Franchise",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SteelBlue,
-                                modifier = Modifier.align(Alignment.CenterVertically)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            factualConnections.forEach { conn ->
-                                MovieConnectionCard(
-                                    item = conn,
-                                    isFactual = true,
-                                    onClick = {
-                                        onConnectedMovieSelect(conn.movie)
-                                        onRelatedMovieClick?.invoke(conn.movie.title)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    if (creativeConnections.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(18.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xFFE040FB).copy(alpha = 0.18f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "AI-ASSESSED CREATIVE SIMILARITIES",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color(0xFFE040FB)
-                                )
-                            }
-                            Text(
-                                text = "Themes • Atmosphere • Narrative Structure",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SteelBlue,
-                                modifier = Modifier.align(Alignment.CenterVertically)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            creativeConnections.forEach { conn ->
-                                MovieConnectionCard(
-                                    item = conn,
-                                    isFactual = false,
-                                    onClick = {
-                                        onConnectedMovieSelect(conn.movie)
-                                        onRelatedMovieClick?.invoke(conn.movie.title)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
+    }
+
+    // Add to Folder / Custom Playlist Dialog
+    if (showAddToPlaylistDialog) {
+        var newFolderName by remember { mutableStateOf("") }
+        var newFolderDescription by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showAddToPlaylistDialog = false },
+            containerColor = MidnightNavy,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CreateNewFolder,
+                        contentDescription = null,
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add to Folder / Playlist", color = FrostWhite)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Organize \"${movie.title}\" into your own custom genre folders or playlists:",
+                        color = SteelBlue,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    if (playlists.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            playlists.forEach { pl ->
+                                val isChecked = safeMovieId in pl.movieIds || movie.id in pl.movieIds
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF0E1D30))
+                                        .border(
+                                            1.dp,
+                                            if (isChecked) ElectricCyan else SteelBlue.copy(alpha = 0.35f),
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable {
+                                            repository.toggleMovieInPlaylist(pl.id, movie)
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        .testTag("folder_option_${pl.name.lowercase().replace(" ", "_")}"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = {
+                                            repository.toggleMovieInPlaylist(pl.id, movie)
+                                        },
+                                        colors = CheckboxDefaults.colors(
+                                            checkedColor = ElectricCyan,
+                                            uncheckedColor = SteelBlue,
+                                            checkmarkColor = DeepBlack
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.FolderSpecial,
+                                        contentDescription = null,
+                                        tint = if (isChecked) ElectricCyan else IcyBlue,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = pl.name,
+                                            color = FrostWhite,
+                                            style = MaterialTheme.typography.titleSmall
+                                        )
+                                        if (pl.description.isNotBlank()) {
+                                            Text(
+                                                text = pl.description,
+                                                color = SteelBlue,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "${pl.movieIds.size}",
+                                        color = ElectricCyan,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "No folders created yet. Create your first custom genre playlist below (e.g., Psychological, Mind-Bending, Comfort Classics).",
+                            color = IcyBlue,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    HorizontalDivider(color = SteelBlue.copy(alpha = 0.25f))
+
+                    Text(
+                        text = "Create New Folder / Playlist",
+                        color = ElectricCyan,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        placeholder = { Text("Folder name (e.g., Psychological)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("new_folder_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ElectricCyan,
+                            unfocusedBorderColor = SteelBlue,
+                            focusedTextColor = FrostWhite,
+                            unfocusedTextColor = FrostWhite
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = newFolderDescription,
+                        onValueChange = { newFolderDescription = it },
+                        placeholder = { Text("Custom genre / vibe notes (optional)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("new_folder_desc_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ElectricCyan,
+                            unfocusedBorderColor = SteelBlue,
+                            focusedTextColor = FrostWhite,
+                            unfocusedTextColor = FrostWhite
+                        )
+                    )
+
+                    if (newFolderName.isNotBlank()) {
+                        GlassPillButton(
+                            text = "Create \"${newFolderName.trim()}\" & Add Movie",
+                            icon = Icons.Default.CreateNewFolder,
+                            isActive = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("create_and_add_folder_btn"),
+                            onClick = {
+                                repository.createPlaylist(
+                                    name = newFolderName.trim(),
+                                    description = newFolderDescription.trim(),
+                                    initialMovie = movie
+                                )
+                                newFolderName = ""
+                                newFolderDescription = ""
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newFolderName.isNotBlank()) {
+                            repository.createPlaylist(
+                                name = newFolderName.trim(),
+                                description = newFolderDescription.trim(),
+                                initialMovie = movie
+                            )
+                        }
+                        showAddToPlaylistDialog = false
+                    },
+                    modifier = Modifier.testTag("done_folder_dialog_btn")
+                ) {
+                    Text("Done", color = ElectricCyan)
+                }
+            }
+        )
     }
 
     // Automated Rewatch Dialog

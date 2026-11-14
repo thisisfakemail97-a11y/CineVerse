@@ -109,6 +109,7 @@ class CineverseRepository(context: Context) {
         val _userLibrary = MutableStateFlow<List<MovieItem>>(emptyList())
         val _diaryEntries = MutableStateFlow<List<DiaryEntry>>(emptyList())
         val _viewingHistory = MutableStateFlow<List<ViewingHistory>>(emptyList())
+        val _playlists = MutableStateFlow<List<MoviePlaylist>>(emptyList())
         val _socialDiscoveries = MutableStateFlow<List<SocialDiscoveryRecord>>(emptyList())
         val _recommendationFeedback = MutableStateFlow<List<RecommendationFeedback>>(emptyList())
         val _followedReleaseIds = MutableStateFlow<Set<String>>(emptySet())
@@ -118,6 +119,7 @@ class CineverseRepository(context: Context) {
         val _isSyncing = MutableStateFlow(false)
         val _lastSyncTime = MutableStateFlow("")
         val _refreshVersion = MutableStateFlow(0)
+        val _searchHistory = MutableStateFlow<List<String>>(emptyList())
 
         val sharedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -165,6 +167,7 @@ class CineverseRepository(context: Context) {
     val userLibrary: StateFlow<List<MovieItem>> = _userLibrary.asStateFlow()
     val diaryEntries: StateFlow<List<DiaryEntry>> = _diaryEntries.asStateFlow()
     val viewingHistory: StateFlow<List<ViewingHistory>> = _viewingHistory.asStateFlow()
+    val playlists: StateFlow<List<MoviePlaylist>> = _playlists.asStateFlow()
     val socialDiscoveries: StateFlow<List<SocialDiscoveryRecord>> = _socialDiscoveries.asStateFlow()
     val recommendationFeedback: StateFlow<List<RecommendationFeedback>> = _recommendationFeedback.asStateFlow()
     val followedReleaseIds: StateFlow<Set<String>> = _followedReleaseIds.asStateFlow()
@@ -174,6 +177,7 @@ class CineverseRepository(context: Context) {
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
     val lastSyncTime: StateFlow<String> = _lastSyncTime.asStateFlow()
     val refreshVersion: StateFlow<Int> = _refreshVersion.asStateFlow()
+    val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
 
     val phase5Engine: Phase5AiEngine
         get() {
@@ -294,6 +298,7 @@ class CineverseRepository(context: Context) {
             _userLibrary.value = emptyList()
             _diaryEntries.value = emptyList()
             _viewingHistory.value = emptyList()
+            _playlists.value = emptyList()
             _socialDiscoveries.value = emptyList()
             _recommendationFeedback.value = emptyList()
             _followedReleaseIds.value = emptySet()
@@ -442,10 +447,262 @@ class CineverseRepository(context: Context) {
             }
         }
 
-        // 6. Phase 6 Preferences (Followed Releases, Selected Region)
+        // 6. Phase 6 Preferences (Followed Releases, Selected Region, Search History, Playlists)
         val followedSet = prefs.getStringSet("followed_release_ids", emptySet()) ?: emptySet()
         _followedReleaseIds.value = followedSet.toSet()
         _selectedRegion.value = prefs.getString("selected_region", "India") ?: "India"
+        loadSearchHistoryFromPrefs()
+        loadPlaylistsFromPrefs()
+    }
+
+    private fun loadPlaylistsFromPrefs() {
+        val raw = prefs.getString("saved_playlists", null)
+        if (!raw.isNullOrBlank()) {
+            try {
+                val arr = JSONArray(raw)
+                val list = mutableListOf<MoviePlaylist>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val mArr = obj.optJSONArray("movieIds") ?: JSONArray()
+                    val mIds = mutableListOf<String>()
+                    for (j in 0 until mArr.length()) {
+                        val idVal = mArr.optString(j, "").trim()
+                        if (idVal.isNotBlank() && idVal !in mIds) mIds.add(idVal)
+                    }
+                    val name = obj.optString("name", "").trim()
+                    if (name.isNotBlank()) {
+                        list.add(
+                            MoviePlaylist(
+                                id = obj.optString("id", "pl_${name.hashCode()}"),
+                                userId = obj.optString("userId", getCurrentUserId() ?: "guest"),
+                                name = name,
+                                description = obj.optString("description", ""),
+                                movieIds = mIds,
+                                createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                                updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                }
+                _playlists.value = list
+            } catch (e: Exception) {
+                Log.e("CineverseRepo", "Error reading playlists: ${e.message}")
+            }
+        }
+    }
+
+    private fun playlistsToJsonArray(list: List<MoviePlaylist>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { pl ->
+            val mIds = JSONArray()
+            pl.movieIds.forEach { mIds.put(it) }
+            arr.put(
+                JSONObject().apply {
+                    put("id", pl.id)
+                    put("userId", pl.userId)
+                    put("name", pl.name)
+                    put("description", pl.description)
+                    put("movieIds", mIds)
+                    put("createdAt", pl.createdAt)
+                    put("updatedAt", pl.updatedAt)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parsePlaylistsFromJsonString(raw: String?): List<MoviePlaylist> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<MoviePlaylist>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val mArr = obj.optJSONArray("movieIds") ?: JSONArray()
+                val mIds = mutableListOf<String>()
+                for (j in 0 until mArr.length()) {
+                    val idVal = mArr.optString(j, "").trim()
+                    if (idVal.isNotBlank() && idVal !in mIds) mIds.add(idVal)
+                }
+                val name = obj.optString("name", "").trim()
+                if (name.isNotBlank()) {
+                    list.add(
+                        MoviePlaylist(
+                            id = obj.optString("id", "pl_${name.hashCode()}"),
+                            userId = obj.optString("userId", getCurrentUserId() ?: "guest"),
+                            name = name,
+                            description = obj.optString("description", ""),
+                            movieIds = mIds,
+                            createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                        )
+                    )
+                }
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun createPlaylist(name: String, description: String = "", initialMovie: MovieItem? = null): MoviePlaylist {
+        val cleanName = name.trim()
+        val existing = _playlists.value.find { it.name.equals(cleanName, ignoreCase = true) }
+        if (existing != null) {
+            if (initialMovie != null) {
+                toggleMovieInPlaylist(existing.id, initialMovie, forceAdd = true)
+                return _playlists.value.find { it.id == existing.id } ?: existing
+            }
+            return existing
+        }
+        val now = System.currentTimeMillis()
+        val movieIds = if (initialMovie != null) {
+            ensureMovieInLibraryIfNeeded(initialMovie)
+            listOf(initialMovie.id.ifBlank { "title_${initialMovie.title.hashCode()}" })
+        } else {
+            emptyList()
+        }
+        val newPlaylist = MoviePlaylist(
+            id = "playlist_${now}_${cleanName.lowercase().replace(Regex("[^a-z0-9]"), "_")}",
+            userId = getCurrentUserId() ?: "guest",
+            name = cleanName,
+            description = description.trim(),
+            movieIds = movieIds,
+            createdAt = now,
+            updatedAt = now
+        )
+        _playlists.value = listOf(newPlaylist) + _playlists.value
+        _refreshVersion.value = _refreshVersion.value + 1
+        persistLocalVault()
+        syncPlaylistsToFirestore()
+        return newPlaylist
+    }
+
+    fun deletePlaylist(playlistId: String) {
+        _playlists.value = _playlists.value.filterNot { it.id == playlistId }
+        _refreshVersion.value = _refreshVersion.value + 1
+        persistLocalVault()
+        syncPlaylistsToFirestore()
+    }
+
+    private fun ensureMovieInLibraryIfNeeded(movie: MovieItem) {
+        val safeId = movie.id.ifBlank { "title_${movie.title.hashCode()}" }
+        val exists = _userLibrary.value.any {
+            it.id == safeId || it.title.equals(movie.title, ignoreCase = true)
+        }
+        if (!exists && movie.title.isNotBlank()) {
+            addToWatchlist(movie.copy(id = safeId))
+        }
+    }
+
+    fun toggleMovieInPlaylist(playlistId: String, movie: MovieItem, forceAdd: Boolean = false) {
+        val safeMovieId = movie.id.ifBlank { "title_${movie.title.hashCode()}" }
+        val currentList = _playlists.value.toMutableList()
+        val index = currentList.indexOfFirst { it.id == playlistId }
+        if (index < 0) return
+        val pl = currentList[index]
+        val alreadyIn = pl.movieIds.any { it == safeMovieId }
+        val updatedIds = when {
+            forceAdd && !alreadyIn -> {
+                ensureMovieInLibraryIfNeeded(movie.copy(id = safeMovieId))
+                pl.movieIds + safeMovieId
+            }
+            forceAdd && alreadyIn -> pl.movieIds
+            alreadyIn -> pl.movieIds.filterNot { it == safeMovieId }
+            else -> {
+                ensureMovieInLibraryIfNeeded(movie.copy(id = safeMovieId))
+                pl.movieIds + safeMovieId
+            }
+        }
+        currentList[index] = pl.copy(
+            movieIds = updatedIds,
+            updatedAt = System.currentTimeMillis()
+        )
+        _playlists.value = currentList
+        _refreshVersion.value = _refreshVersion.value + 1
+        persistLocalVault()
+        syncPlaylistsToFirestore()
+    }
+
+    fun removeMovieFromPlaylist(playlistId: String, movieId: String) {
+        val currentList = _playlists.value.toMutableList()
+        val index = currentList.indexOfFirst { it.id == playlistId }
+        if (index < 0) return
+        val pl = currentList[index]
+        currentList[index] = pl.copy(
+            movieIds = pl.movieIds.filterNot { it == movieId },
+            updatedAt = System.currentTimeMillis()
+        )
+        _playlists.value = currentList
+        _refreshVersion.value = _refreshVersion.value + 1
+        persistLocalVault()
+        syncPlaylistsToFirestore()
+    }
+
+    private fun syncPlaylistsToFirestore() {
+        val uid = auth?.currentUser?.uid ?: return
+        val firestore = db ?: return
+        val serialized = playlistsToJsonArray(_playlists.value).toString()
+        sharedScope.launch {
+            try {
+                firestore.collection("users").document(uid)
+                    .set(
+                        mapOf(
+                            "userId" to uid,
+                            "playlistsJson" to serialized,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    )
+            } catch (e: Exception) {
+                Log.w("CineverseRepo", "Error syncing playlists: ${e.message}")
+            }
+        }
+    }
+
+    private fun loadSearchHistoryFromPrefs() {
+        val raw = prefs.getString("saved_search_history", null)
+        if (!raw.isNullOrBlank()) {
+            try {
+                val arr = JSONArray(raw)
+                val list = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optString(i, "").trim()
+                    if (item.isNotBlank() && list.none { it.equals(item, ignoreCase = true) }) {
+                        list.add(item)
+                    }
+                }
+                _searchHistory.value = list
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun saveSearchHistoryToPrefs(list: List<String>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(it) }
+        prefs.edit().putString("saved_search_history", arr.toString()).apply()
+    }
+
+    fun addSearchHistory(query: String) {
+        val clean = query.trim()
+        if (clean.length < 2) return
+        val lower = clean.lowercase()
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return
+        val updated = listOf(clean) + _searchHistory.value.filterNot { it.equals(clean, ignoreCase = true) }
+        val trimmedList = updated.take(12)
+        _searchHistory.value = trimmedList
+        saveSearchHistoryToPrefs(trimmedList)
+    }
+
+    fun removeSearchHistoryItem(query: String) {
+        val updated = _searchHistory.value.filterNot { it.equals(query.trim(), ignoreCase = true) }
+        _searchHistory.value = updated
+        saveSearchHistoryToPrefs(updated)
+    }
+
+    fun clearSearchHistory() {
+        _searchHistory.value = emptyList()
+        prefs.edit().remove("saved_search_history").apply()
     }
 
     fun clearAllUserData() {
@@ -453,9 +710,11 @@ class CineverseRepository(context: Context) {
         _userLibrary.value = emptyList()
         _diaryEntries.value = emptyList()
         _viewingHistory.value = emptyList()
+        _playlists.value = emptyList()
         _socialDiscoveries.value = emptyList()
         _recommendationFeedback.value = emptyList()
         _followedReleaseIds.value = emptySet()
+        _searchHistory.value = emptyList()
     }
 
     private fun persistLocalVault() {
@@ -546,12 +805,15 @@ class CineverseRepository(context: Context) {
             )
         }
 
+        val playlistsArray = playlistsToJsonArray(_playlists.value)
+
         prefs.edit()
             .putString("saved_library", libArray.toString())
             .putString("saved_diary", diaryArray.toString())
             .putString("saved_history", historyArray.toString())
             .putString("saved_feedback", fbArray.toString())
             .putString("saved_social_discoveries", socialArray.toString())
+            .putString("saved_playlists", playlistsArray.toString())
             .putStringSet("followed_release_ids", _followedReleaseIds.value)
             .putString("selected_region", _selectedRegion.value)
             .apply()
@@ -559,8 +821,7 @@ class CineverseRepository(context: Context) {
 
     /**
      * Bidirectional Firestore Sync:
-     * Pulls library, diary, and history across devices when signed in with Gmail/Google ID
-     * and pushes local entries back so multi-device state stays unified.
+     * Pulls library, diary, history, and playlists when signed in with Gmail/Google ID.
      */
     suspend fun syncAllWithFirestore() = withContext(Dispatchers.IO) {
         val user = auth?.currentUser ?: return@withContext
@@ -570,11 +831,35 @@ class CineverseRepository(context: Context) {
         syncMutex.withLock {
             _isSyncing.value = true
             try {
+                val userDocSnap = firestore.collection("users").document(uid).get().awaitResult()
+                val remotePlaylistsJson = userDocSnap.getString("playlistsJson")
+                if (!remotePlaylistsJson.isNullOrBlank()) {
+                    val remotePls = parsePlaylistsFromJsonString(remotePlaylistsJson)
+                    if (remotePls.isNotEmpty() && _playlists.value.isEmpty()) {
+                        _playlists.value = remotePls
+                    } else if (remotePls.isNotEmpty()) {
+                        val mergedPls = _playlists.value.toMutableList()
+                        remotePls.forEach { rPl ->
+                            val existingIdx = mergedPls.indexOfFirst { it.id == rPl.id || it.name.equals(rPl.name, ignoreCase = true) }
+                            if (existingIdx < 0) {
+                                mergedPls.add(rPl)
+                            } else {
+                                val existing = mergedPls[existingIdx]
+                                mergedPls[existingIdx] = existing.copy(
+                                    movieIds = (existing.movieIds + rPl.movieIds).distinct()
+                                )
+                            }
+                        }
+                        _playlists.value = mergedPls
+                    }
+                }
+
                 val userDoc = mapOf(
                     "userId" to uid,
                     "email" to (user.email ?: ""),
                     "displayName" to (user.displayName ?: ""),
                     "selectedRegion" to _selectedRegion.value,
+                    "playlistsJson" to playlistsToJsonArray(_playlists.value).toString(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
                 firestore.collection("users").document(uid).set(userDoc, SetOptions.merge()).awaitResult()
@@ -603,7 +888,7 @@ class CineverseRepository(context: Context) {
                     if (idx >= 0) {
                         val local = mergedLibrary[idx]
                         mergedLibrary[idx] = local.copy(
-                            userStatus = if (cStatus == "Watched" || local.userStatus.isBlank()) cStatus else local.userStatus,
+                            userStatus = if (cLastWatched >= local.lastWatchedTimestamp) cStatus else local.userStatus.ifBlank { cStatus },
                             userRating = maxOf(local.userRating, cRating),
                             userReview = if (local.userReview.isBlank()) cReview else local.userReview,
                             posterUrl = local.posterUrl.ifBlank { cPoster },
@@ -720,6 +1005,248 @@ class CineverseRepository(context: Context) {
         }
     }
 
+    /**
+     * Authoritative Upload to Cloud:
+     * Pushes the local device's exact current state to Cloud Firestore:
+     * - Overwrites any changed status (e.g. Watchlist -> Watched/Seen) and ratings
+     * - Uploads custom Playlists/Folders
+     * - Deletes any remote library, diary, or history documents that were removed locally
+     */
+    suspend fun uploadToCloud(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        persistLocalVault()
+        val user = auth?.currentUser
+        val firestore = db
+        if (user == null || firestore == null) {
+            return@withContext false to "Local vault saved (${_userLibrary.value.size} titles, ${_playlists.value.size} playlists). Sign in with Gmail to upload to Cloud."
+        }
+        val uid = user.uid
+        syncMutex.withLock {
+            _isSyncing.value = true
+            try {
+                val userDoc = mapOf(
+                    "userId" to uid,
+                    "email" to (user.email ?: ""),
+                    "displayName" to (user.displayName ?: ""),
+                    "selectedRegion" to _selectedRegion.value,
+                    "playlistsJson" to playlistsToJsonArray(_playlists.value).toString(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                firestore.collection("users").document(uid).set(userDoc, SetOptions.merge()).awaitResult()
+
+                // 1. Authoritative Library Sync: Delete remote docs that were removed locally, then push all local items
+                val localLibraryIds = _userLibrary.value.map { it.id.ifBlank { "title_${it.title.hashCode()}" } }.toSet()
+                val remoteLibDocs = firestore.collection("users").document(uid).collection("library").get().awaitResult()
+                var deletedRemoteCount = 0
+                for (doc in remoteLibDocs.documents) {
+                    val docTitleId = doc.getString("titleId")?.takeIf { it.isNotBlank() } ?: doc.id
+                    if (doc.id !in localLibraryIds && docTitleId !in localLibraryIds) {
+                        doc.reference.delete().awaitResult()
+                        deletedRemoteCount++
+                    }
+                }
+                _userLibrary.value.forEach { pushLibraryItemSuspended(firestore, uid, it) }
+
+                // 2. Authoritative Diary Sync: Delete remote diary docs removed locally, then push all local diary entries
+                val localDiaryIds = _diaryEntries.value.map { it.id.ifBlank { "diary_${it.titleId}" } }.toSet()
+                val remoteDiaryDocs = firestore.collection("users").document(uid).collection("diary").get().awaitResult()
+                for (doc in remoteDiaryDocs.documents) {
+                    if (doc.id !in localDiaryIds) {
+                        doc.reference.delete().awaitResult()
+                    }
+                }
+                _diaryEntries.value.forEach { pushDiaryEntrySuspended(firestore, uid, it) }
+
+                // 3. Authoritative History Sync: Delete remote history docs removed locally, then push all local history entries
+                val localHistIds = _viewingHistory.value.map { it.id }.toSet()
+                val remoteHistDocs = firestore.collection("users").document(uid).collection("history").get().awaitResult()
+                for (doc in remoteHistDocs.documents) {
+                    if (doc.id !in localHistIds) {
+                        doc.reference.delete().awaitResult()
+                    }
+                }
+                _viewingHistory.value.forEach { pushHistorySuspended(firestore, uid, it) }
+
+                _lastSyncTime.value = SimpleDateFormat("h:mm a • MMM d", Locale.US).format(Date())
+                _refreshVersion.value = _refreshVersion.value + 1
+                val delNote = if (deletedRemoteCount > 0) " ($deletedRemoteCount deleted item(s) removed from Cloud)" else ""
+                true to "Uploaded ${_userLibrary.value.size} titles, ${_playlists.value.size} playlists & ${_diaryEntries.value.size} diary entries to Cloud$delNote."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("CineverseRepo", """{"op":"uploadToCloud","uid":"$uid","error":"${e.message}"}""")
+                false to "Cloud upload failed: ${e.localizedMessage ?: "Network error"}"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    /**
+     * Authoritative Download from Cloud:
+     * Pulls the exact remote state from Cloud Firestore onto this device:
+     * - Updates any movie changed from Watchlist to Watched/Seen on another device
+     * - Removes any local movie, diary entry, or history log that was deleted in the Cloud
+     * - Replaces local Playlists/Folders with the Cloud Playlists state
+     */
+    suspend fun downloadFromCloud(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val user = auth?.currentUser
+        val firestore = db
+        if (user == null || firestore == null) {
+            loadLocalVault()
+            _refreshVersion.value = _refreshVersion.value + 1
+            return@withContext false to "Loaded local vault (${_userLibrary.value.size} titles). Sign in with Gmail to download from Cloud."
+        }
+        val uid = user.uid
+        syncMutex.withLock {
+            _isSyncing.value = true
+            try {
+                // 1. Pull User Profile & Playlists
+                val userDocSnap = firestore.collection("users").document(uid).get().awaitResult()
+                val remotePlaylistsJson = userDocSnap.getString("playlistsJson")
+                if (remotePlaylistsJson != null) {
+                    _playlists.value = parsePlaylistsFromJsonString(remotePlaylistsJson)
+                }
+
+                // 2. Pull Authoritative Remote Library (replaces local library so deletions & Watchlist->Watched changes apply)
+                val libSnapshot = firestore.collection("users").document(uid).collection("library").get().awaitResult()
+                val currentLocalMap = _userLibrary.value.associateBy { it.id.ifBlank { "title_${it.title.hashCode()}" } }
+                val authoritativeLibrary = mutableListOf<MovieItem>()
+                for (doc in libSnapshot.documents) {
+                    val cTitleId = doc.getString("titleId")?.takeIf { it.isNotBlank() } ?: doc.id
+                    val cTitle = doc.getString("title")?.takeIf { it.isNotBlank() } ?: continue
+                    val cStatus = doc.getString("status")?.takeIf { it in listOf("Watchlist", "Watched", "Dropped") } ?: "Watchlist"
+                    val cRating = (doc.getLong("personalRating")?.toInt() ?: 0).coerceIn(0, 10)
+                    val cReview = doc.getString("personalReview") ?: ""
+                    val cPoster = sanitizePosterUrl(doc.getString("posterUrl") ?: "")
+                    val cYear = doc.getLong("releaseYear")?.toInt() ?: 2024
+                    val cType = doc.getString("contentType") ?: "Movie"
+                    val cRewatch = (doc.getLong("rewatchCount")?.toInt() ?: 1).coerceAtLeast(1)
+                    val cDirector = doc.getString("director") ?: ""
+                    val cComposer = doc.getString("composer") ?: ""
+                    val cLastWatched = doc.getLong("lastWatchedTimestamp") ?: 0L
+                    val cSigColor = doc.getString("signatureColorHex") ?: "#54C8F5"
+                    val cGenres = (doc.get("genres") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                    val cCast = (doc.get("mainCast") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+
+                    val baseItem = currentLocalMap[cTitleId]
+                        ?: _userLibrary.value.find { it.title.equals(cTitle, ignoreCase = true) }
+                        ?: phase5Engine.verifiedCatalog.find { it.id == cTitleId || it.title.equals(cTitle, ignoreCase = true) }
+
+                    val syncedMovie = baseItem?.copy(
+                        id = cTitleId,
+                        userStatus = cStatus,
+                        userRating = cRating,
+                        userReview = cReview,
+                        posterUrl = cPoster.ifBlank { baseItem.posterUrl },
+                        bannerUrl = cPoster.ifBlank { baseItem.bannerUrl },
+                        rewatchCount = cRewatch,
+                        lastWatchedTimestamp = cLastWatched,
+                        director = baseItem.director.ifBlank { cDirector },
+                        composer = baseItem.composer.ifBlank { cComposer },
+                        genres = baseItem.genres.ifEmpty { cGenres },
+                        mainCast = baseItem.mainCast.ifEmpty { cCast }
+                    ) ?: MovieItem(
+                        id = cTitleId,
+                        title = cTitle,
+                        originalTitle = cTitle,
+                        releaseYear = cYear,
+                        releaseDate = "$cYear",
+                        contentType = cType,
+                        posterUrl = cPoster,
+                        bannerUrl = cPoster,
+                        genres = cGenres.ifEmpty { listOf("Cinema") },
+                        director = cDirector,
+                        mainCast = cCast,
+                        composer = phase5Engine.resolveKnownComposer(cTitle, cComposer),
+                        userStatus = cStatus,
+                        userRating = cRating,
+                        userReview = cReview,
+                        rewatchCount = cRewatch,
+                        lastWatchedTimestamp = cLastWatched,
+                        signatureColorHex = cSigColor,
+                        isVerified = true
+                    )
+                    authoritativeLibrary.add(syncedMovie)
+                }
+                _userLibrary.value = authoritativeLibrary.sortedByDescending { it.lastWatchedTimestamp }
+
+                // 3. Pull Authoritative Remote Diary
+                val diarySnapshot = firestore.collection("users").document(uid).collection("diary").get().awaitResult()
+                val authoritativeDiary = mutableListOf<DiaryEntry>()
+                for (doc in diarySnapshot.documents) {
+                    val entryId = doc.id
+                    val tagsList = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                    authoritativeDiary.add(
+                        DiaryEntry(
+                            id = entryId,
+                            userId = uid,
+                            titleId = doc.getString("titleId") ?: entryId,
+                            movieTitle = doc.getString("movieTitle") ?: "",
+                            posterUrl = sanitizePosterUrl(doc.getString("posterUrl") ?: ""),
+                            entryDate = doc.getString("entryDate") ?: "",
+                            rating = (doc.getLong("rating")?.toInt() ?: 0).coerceIn(0, 10),
+                            review = doc.getString("review") ?: "",
+                            thoughts = doc.getString("thoughts") ?: "",
+                            isSpoiler = false,
+                            tags = tagsList
+                        )
+                    )
+                }
+                _diaryEntries.value = authoritativeDiary
+
+                // 4. Pull Authoritative Remote Viewing History
+                val histSnapshot = firestore.collection("users").document(uid).collection("history").get().awaitResult()
+                val authoritativeHistory = mutableListOf<ViewingHistory>()
+                for (doc in histSnapshot.documents) {
+                    val histId = doc.id
+                    authoritativeHistory.add(
+                        ViewingHistory(
+                            id = histId,
+                            userId = uid,
+                            titleId = doc.getString("titleId") ?: histId,
+                            movieTitle = doc.getString("movieTitle") ?: "",
+                            posterUrl = sanitizePosterUrl(doc.getString("posterUrl") ?: ""),
+                            watchDate = doc.getString("watchDate") ?: "",
+                            rewatchSequence = (doc.getLong("rewatchSequence")?.toInt() ?: 1).coerceAtLeast(1),
+                            sessionRating = (doc.getLong("sessionRating")?.toInt() ?: 0).coerceIn(0, 10),
+                            sessionNotes = doc.getString("sessionNotes") ?: ""
+                        )
+                    )
+                }
+                _viewingHistory.value = authoritativeHistory
+
+                persistLocalVault()
+                _lastSyncTime.value = SimpleDateFormat("h:mm a • MMM d", Locale.US).format(Date())
+                _refreshVersion.value = _refreshVersion.value + 1
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("CineverseRepo", """{"op":"downloadFromCloud","uid":"$uid","error":"${e.message}"}""")
+                return@withContext false to "Cloud download failed: ${e.localizedMessage ?: "Network error"}"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+        backfillMissingPosters()
+        true to "Downloaded ${_userLibrary.value.size} titles, ${_playlists.value.size} playlists & ${_diaryEntries.value.size} diary entries from Cloud."
+    }
+
+    /**
+     * Applies an authoritative snapshot (used when downloading remote state or verifying exact state sync across devices)
+     * so that status changes (e.g., Watchlist -> Watched) and deletions are reflected accurately.
+     */
+    fun applyAuthoritativeSnapshot(
+        remoteLibrary: List<MovieItem>,
+        remoteDiary: List<DiaryEntry>,
+        remotePlaylists: List<MoviePlaylist> = _playlists.value
+    ) {
+        _userLibrary.value = remoteLibrary
+        _diaryEntries.value = remoteDiary
+        _playlists.value = remotePlaylists
+        _refreshVersion.value = _refreshVersion.value + 1
+        persistLocalVault()
+    }
+
     private suspend fun pushLibraryItemSuspended(firestore: FirebaseFirestore, uid: String, movie: MovieItem) {
         try {
             val safeId = movie.id.ifBlank { "title_${movie.title.hashCode()}" }
@@ -818,13 +1345,27 @@ class CineverseRepository(context: Context) {
 
     fun markWatched(movie: MovieItem, rating: Int = 0, review: String = "") {
         val now = System.currentTimeMillis()
+        val safeTitleId = movie.id.ifBlank { "title_${movie.title.hashCode()}" }
         val current = _userLibrary.value.toMutableList()
-        val index = current.indexOfFirst { it.id == movie.id || it.title.equals(movie.title, ignoreCase = true) }
-        val existingRewatches = if (index >= 0) current[index].rewatchCount else 1
+        val index = current.indexOfFirst { it.id == safeTitleId || it.id == movie.id || it.title.equals(movie.title, ignoreCase = true) }
+        val existingItem = if (index >= 0) current[index] else null
+        val existingRewatches = existingItem?.rewatchCount ?: 1
+        val effectiveRating = when {
+            rating > 0 -> rating
+            existingItem != null && existingItem.userRating > 0 -> existingItem.userRating
+            movie.userRating > 0 -> movie.userRating
+            else -> 8
+        }
+        val effectiveReview = when {
+            review.isNotBlank() -> review
+            existingItem != null && existingItem.userReview.isNotBlank() -> existingItem.userReview
+            else -> movie.userReview
+        }
         val updated = movie.copy(
+            id = safeTitleId,
             userStatus = "Watched",
-            userRating = if (rating > 0) rating else movie.userRating,
-            userReview = if (review.isNotBlank()) review else movie.userReview,
+            userRating = effectiveRating,
+            userReview = effectiveReview,
             isUserReviewSpoiler = false,
             rewatchCount = maxOf(1, existingRewatches),
             lastWatchedTimestamp = now,
@@ -836,27 +1377,55 @@ class CineverseRepository(context: Context) {
         current.add(0, updated)
         _userLibrary.value = current
         _refreshVersion.value = _refreshVersion.value + 1
+
+        // Deduplicated Diary Entry: Update existing initial watch diary entry if present instead of recording twice
+        val dateStr = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date())
+        val currentDiary = _diaryEntries.value.toMutableList()
+        val existingDiaryIdx = currentDiary.indexOfFirst { entry ->
+            val isSameMovie = entry.titleId == safeTitleId ||
+                entry.titleId == movie.id ||
+                entry.movieTitle.equals(movie.title, ignoreCase = true)
+            val isRewatchEntry = entry.tags.any { it.equals("Rewatch", ignoreCase = true) } ||
+                entry.id.contains("_rewatch_")
+            isSameMovie && !isRewatchEntry
+        }
+
+        val diaryRecord = if (existingDiaryIdx >= 0) {
+            val prev = currentDiary[existingDiaryIdx]
+            val merged = prev.copy(
+                titleId = safeTitleId,
+                movieTitle = movie.title,
+                posterUrl = movie.posterUrl.ifBlank { prev.posterUrl },
+                entryDate = dateStr,
+                rating = effectiveRating,
+                review = if (effectiveReview.isNotBlank()) effectiveReview else prev.review,
+                thoughts = prev.thoughts.ifBlank { "Logged as Watched" },
+                isSpoiler = false
+            )
+            currentDiary[existingDiaryIdx] = merged
+            merged
+        } else {
+            val created = DiaryEntry(
+                id = "diary_initial_${safeTitleId}",
+                userId = getCurrentUserId() ?: "guest",
+                titleId = safeTitleId,
+                movieTitle = movie.title,
+                posterUrl = movie.posterUrl,
+                entryDate = dateStr,
+                rating = effectiveRating,
+                review = effectiveReview,
+                thoughts = "Logged as Watched",
+                tags = listOf("Completed"),
+                isSpoiler = false
+            )
+            currentDiary.add(0, created)
+            created
+        }
+
+        _diaryEntries.value = currentDiary
         persistLocalVault()
         syncItemToFirestore(updated)
-
-        if (review.isNotBlank() || rating > 0) {
-            val dateStr = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date())
-            addDiaryEntry(
-                DiaryEntry(
-                    id = "diary_${movie.id}_${now}",
-                    userId = getCurrentUserId() ?: "guest",
-                    titleId = movie.id.ifBlank { "title_${movie.title.hashCode()}" },
-                    movieTitle = movie.title,
-                    posterUrl = movie.posterUrl,
-                    entryDate = dateStr,
-                    rating = if (rating > 0) rating else movie.userRating,
-                    review = review,
-                    thoughts = "Logged as Watched",
-                    tags = listOf("Completed"),
-                    isSpoiler = false
-                )
-            )
-        }
+        syncDiaryEntryToFirestore(diaryRecord)
     }
 
     fun moveToDropped(movie: MovieItem) {
@@ -940,7 +1509,12 @@ class CineverseRepository(context: Context) {
 
     fun addDiaryEntry(entry: DiaryEntry) {
         val list = _diaryEntries.value.toMutableList()
-        list.add(0, entry.copy(isSpoiler = false))
+        val existingIdx = list.indexOfFirst { it.id == entry.id }
+        if (existingIdx >= 0) {
+            list[existingIdx] = entry.copy(isSpoiler = false)
+        } else {
+            list.add(0, entry.copy(isSpoiler = false))
+        }
         _diaryEntries.value = list
         persistLocalVault()
         syncDiaryEntryToFirestore(entry)
@@ -978,9 +1552,18 @@ class CineverseRepository(context: Context) {
         val current = _userLibrary.value.toMutableList()
         val index = current.indexOfFirst { it.id == movieId }
         if (index >= 0) {
-            val updated = current[index].copy(
+            val target = current[index]
+            if (newStatus.equals("Watched", ignoreCase = true)) {
+                markWatched(
+                    movie = target,
+                    rating = if (target.userRating > 0) target.userRating else 8,
+                    review = target.userReview
+                )
+                return
+            }
+            val updated = target.copy(
                 userStatus = newStatus,
-                lastWatchedTimestamp = if (newStatus == "Watched") System.currentTimeMillis() else current[index].lastWatchedTimestamp
+                lastWatchedTimestamp = if (newStatus == "Watched") System.currentTimeMillis() else target.lastWatchedTimestamp
             )
             current[index] = updated
             _userLibrary.value = current
@@ -1003,19 +1586,34 @@ class CineverseRepository(context: Context) {
     }
 
     fun removeFromLibrary(movieId: String) {
-        val updated = _userLibrary.value.filterNot { it.id == movieId }
+        removeMultipleFromLibrary(setOf(movieId))
+    }
+
+    fun removeMultipleFromLibrary(movieIds: Set<String>) {
+        if (movieIds.isEmpty()) return
+        val updated = _userLibrary.value.filterNot { it.id in movieIds }
         _userLibrary.value = updated
+        _playlists.value = _playlists.value.map { pl ->
+            if (pl.movieIds.any { it in movieIds }) {
+                pl.copy(movieIds = pl.movieIds.filterNot { it in movieIds }, updatedAt = System.currentTimeMillis())
+            } else {
+                pl
+            }
+        }
         _refreshVersion.value = _refreshVersion.value + 1
         persistLocalVault()
 
         val uid = auth?.currentUser?.uid ?: return
         val firestore = db ?: return
         sharedScope.launch {
-            try {
-                firestore.collection("users").document(uid).collection("library").document(movieId).delete()
-            } catch (e: Exception) {
-                Log.w("CineverseRepo", "Error deleting from cloud: ${e.message}")
+            movieIds.forEach { movieId ->
+                try {
+                    firestore.collection("users").document(uid).collection("library").document(movieId).delete()
+                } catch (e: Exception) {
+                    Log.w("CineverseRepo", "Error deleting $movieId from cloud: ${e.message}")
+                }
             }
+            syncPlaylistsToFirestore()
         }
     }
 
@@ -1038,7 +1636,7 @@ class CineverseRepository(context: Context) {
     }
 
     /**
-     * Backup & Export: Serializes complete library, diary entries, and viewing history into a clean JSON string.
+     * Backup & Export: Serializes complete library, diary entries, viewing history, and playlists into a clean JSON string.
      */
     fun exportBackupJson(): String {
         val root = JSONObject()
@@ -1082,6 +1680,7 @@ class CineverseRepository(context: Context) {
             )
         }
         root.put("history", histArray)
+        root.put("playlists", playlistsToJsonArray(_playlists.value))
 
         return root.toString(2)
     }
@@ -1129,6 +1728,7 @@ class CineverseRepository(context: Context) {
                     // Merge highest ratings/rewatches
                     val existing = current[existingIndex]
                     current[existingIndex] = existing.copy(
+                        userStatus = if (item.userStatus == "Watched") "Watched" else existing.userStatus,
                         userRating = maxOf(existing.userRating, item.userRating),
                         rewatchCount = maxOf(existing.rewatchCount, item.rewatchCount),
                         userReview = if (existing.userReview.isBlank()) item.userReview else existing.userReview
@@ -1165,6 +1765,24 @@ class CineverseRepository(context: Context) {
                     }
                 }
                 _diaryEntries.value = currentDiary
+            }
+
+            // Restore Playlists
+            val playlistsArr = root.optJSONArray("playlists")
+            if (playlistsArr != null) {
+                val parsedPlaylists = parsePlaylistsFromJsonString(playlistsArr.toString())
+                if (parsedPlaylists.isNotEmpty()) {
+                    val mergedPls = _playlists.value.toMutableList()
+                    parsedPlaylists.forEach { p ->
+                        val idx = mergedPls.indexOfFirst { it.id == p.id || it.name.equals(p.name, ignoreCase = true) }
+                        if (idx >= 0) {
+                            mergedPls[idx] = mergedPls[idx].copy(movieIds = (mergedPls[idx].movieIds + p.movieIds).distinct())
+                        } else {
+                            mergedPls.add(p)
+                        }
+                    }
+                    _playlists.value = mergedPls
+                }
             }
 
             persistLocalVault()
@@ -1943,6 +2561,66 @@ class CineverseRepository(context: Context) {
      * 4. Multi-quote extraction with character speakers.
      * 5. Strict avoidance of anime & audio clutter.
      */
+    /**
+     * Zero-latency (0ms) letter-by-letter prefix & substring movie matcher so that as the user types
+     * from the very first letter ('i', 'in', 'int', 'f', 'th'), movie cards with posters appear immediately
+     * before and while the live internet results stream in.
+     */
+    fun searchInstantPrefix(
+        query: String,
+        contentType: String = "All",
+        genre: String = "All"
+    ): List<MovieItem> {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return emptyList()
+        val qLower = trimmed.lowercase()
+        val normalized = normalizeQuery(trimmed)
+        val candidates = mutableListOf<MovieItem>()
+
+        findLandmarkMatch(normalized)?.let { candidates.add(it) }
+
+        val combinedPool = (_userLibrary.value + phase5Engine.verifiedCatalog).distinctBy { it.title.lowercase() }
+        for (item in combinedPool) {
+            if (candidates.any { it.title.equals(item.title, ignoreCase = true) }) continue
+            val tLower = item.title.lowercase()
+            val words = tLower.split(Regex("[\\s:–\\-]+")).filter { it.isNotBlank() }
+            val matches = when {
+                tLower.startsWith(qLower) || tLower.startsWith(normalized) -> true
+                words.any { it.startsWith(qLower) } -> true
+                qLower.length >= 2 && (
+                    tLower.contains(qLower) ||
+                        tLower.contains(normalized) ||
+                        item.director.lowercase().contains(qLower) ||
+                        item.mainCast.any { it.lowercase().contains(qLower) }
+                    ) -> true
+                else -> false
+            }
+            if (matches) {
+                candidates.add(item)
+            }
+        }
+
+        return candidates
+            .filter { item ->
+                val typeOk = contentType == "All" || item.contentType.equals(contentType, ignoreCase = true)
+                val genreOk = genre == "All" || item.genres.any { it.equals(genre, ignoreCase = true) }
+                typeOk && genreOk
+            }
+            .sortedWith(
+                compareByDescending<MovieItem> { item ->
+                    val tLower = item.title.lowercase()
+                    val words = tLower.split(Regex("[\\s:–\\-]+"))
+                    when {
+                        tLower == qLower || tLower == normalized -> 600
+                        tLower.startsWith(qLower) -> 450
+                        words.any { it.startsWith(qLower) } -> 320
+                        tLower.contains(qLower) -> 200
+                        else -> 80
+                    }
+                }.thenByDescending { it.publicRating }
+            )
+    }
+
     suspend fun searchRealTime(
         query: String,
         contentType: String = "All",
@@ -1955,23 +2633,31 @@ class CineverseRepository(context: Context) {
         searchCache[cacheKey]?.let { return@withContext it }
 
         val normalized = normalizeQuery(trimmed)
+        val qLower = trimmed.lowercase()
         val liveResults = mutableListOf<MovieItem>()
 
-        // 1. High-Priority Landmark & Verified Catalog Hit Check (Immediate 0ms guarantee for blockbusters, cult classics & Indian web series)
+        // 1. High-Priority Landmark & Verified Catalog Hit Check (Supports 1+ letter prefix, word-prefix & substring matching)
         val landmarkMatch = findLandmarkMatch(normalized)
         if (landmarkMatch != null) {
             liveResults.add(landmarkMatch)
         }
-        if (normalized.length >= 3) {
-            phase5Engine.verifiedCatalog.forEach { catItem ->
-                if (liveResults.none { it.title.equals(catItem.title, ignoreCase = true) }) {
-                    val tLower = catItem.title.lowercase()
-                    if (tLower.contains(normalized) || normalized.contains(tLower) ||
-                        catItem.director.lowercase().contains(normalized) ||
-                        catItem.mainCast.any { it.lowercase().contains(normalized) }
-                    ) {
-                        liveResults.add(catItem)
-                    }
+        phase5Engine.verifiedCatalog.forEach { catItem ->
+            if (liveResults.none { it.title.equals(catItem.title, ignoreCase = true) }) {
+                val tLower = catItem.title.lowercase()
+                val words = tLower.split(Regex("[\\s:–\\-]+")).filter { it.isNotBlank() }
+                val matched = when {
+                    tLower.startsWith(qLower) || tLower.startsWith(normalized) -> true
+                    words.any { it.startsWith(qLower) } -> true
+                    normalized.length >= 2 && (
+                        tLower.contains(normalized) ||
+                            normalized.contains(tLower) ||
+                            catItem.director.lowercase().contains(normalized) ||
+                            catItem.mainCast.any { it.lowercase().contains(normalized) }
+                        ) -> true
+                    else -> false
+                }
+                if (matched) {
+                    liveResults.add(catItem)
                 }
             }
         }

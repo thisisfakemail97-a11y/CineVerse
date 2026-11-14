@@ -23,7 +23,7 @@ class ExampleRobolectricTest {
     fun `read string from context`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("Cineverse", appName)
+        assertEquals("CineMax", appName)
     }
 
     @Test
@@ -644,5 +644,147 @@ class ExampleRobolectricTest {
             manualTextInput = ""
         )
         assertTrue("Real Instagram reel link should extract at least 4 movies via hook-and-crook pipeline", reelResult.mentions.size >= 4)
+
+        // Test 1st-letter continuous movie search (e.g. typing 'i' or 'f')
+        val firstLetterI = repository.searchInstantPrefix("i")
+        assertTrue("Typing single letter 'i' should immediately return movies like Interstellar/Inception", firstLetterI.any { it.title == "Interstellar" || it.title == "Inception" })
+
+        val firstLetterF = repository.searchInstantPrefix("f")
+        assertTrue("Typing single letter 'f' should immediately return Farzi and The Family Man", firstLetterF.any { it.title == "Farzi" || it.title == "The Family Man" })
+
+        // Test persistent search history add, delete single, and clear all
+        repository.clearSearchHistory()
+        repository.addSearchHistory("The Family Man")
+        repository.addSearchHistory("Interstellar")
+        assertEquals(listOf("Interstellar", "The Family Man"), repository.searchHistory.value)
+        repository.removeSearchHistoryItem("Interstellar")
+        assertEquals(listOf("The Family Man"), repository.searchHistory.value)
+        repository.clearSearchHistory()
+        assertTrue(repository.searchHistory.value.isEmpty())
+    }
+
+    @Test
+    fun `glass transparency slider persists 0 to 100 percent and sync upload and download actions execute cleanly`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("cineverse_vault", Context.MODE_PRIVATE)
+        val repository = CineverseRepository(context)
+
+        // Default transparency is 40% (0.40f)
+        prefs.edit().remove("glass_transparency").commit()
+        assertEquals(0.40f, prefs.getFloat("glass_transparency", 0.40f), 0.001f)
+
+        // Set to 0% transparent (solid glass)
+        prefs.edit().putFloat("glass_transparency", 0.0f).commit()
+        assertEquals(0.0f, prefs.getFloat("glass_transparency", 0.40f), 0.001f)
+
+        // Set to 100% transparent (completely clear glass)
+        prefs.edit().putFloat("glass_transparency", 1.0f).commit()
+        assertEquals(1.0f, prefs.getFloat("glass_transparency", 0.40f), 0.001f)
+
+        // Verify uploadToCloud and downloadFromCloud execute and return status messages
+        val (_, uploadMsg) = repository.uploadToCloud()
+        assertTrue("Upload message must not be blank", uploadMsg.isNotBlank())
+
+        val (_, downloadMsg) = repository.downloadFromCloud()
+        assertTrue("Download message must not be blank", downloadMsg.isNotBlank())
+    }
+
+    @Test
+    fun `marking movie as watched records only once in diary without duplicates`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = CineverseRepository(context)
+
+        val coherence = repository.search("Coherence").first()
+        repository.removeFromLibrary(coherence.id)
+        repository.diaryEntries.value
+            .filter { it.titleId == coherence.id || it.movieTitle.equals("Coherence", ignoreCase = true) }
+            .forEach { repository.deleteDiaryEntry(it.id) }
+
+        // Call markWatched twice (simulating rapid click or detail + callback invocation)
+        repository.markWatched(coherence, rating = 9, review = "First watch log")
+        repository.markWatched(coherence, rating = 9, review = "First watch log updated")
+
+        val coherenceDiaryEntries = repository.diaryEntries.value.filter {
+            it.titleId == coherence.id || it.movieTitle.equals("Coherence", ignoreCase = true)
+        }
+        assertEquals("Recording a movie as watched must create exactly 1 diary entry, not 2", 1, coherenceDiaryEntries.size)
+        assertEquals("First watch log updated", coherenceDiaryEntries.first().review)
+    }
+
+    @Test
+    fun `custom playlists and folders create, toggle movies, and clean up on batch delete`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = CineverseRepository(context)
+
+        val primer = repository.search("Primer").first()
+        val inception = repository.search("Inception").first()
+        repository.addToWatchlist(primer)
+        repository.addToWatchlist(inception)
+
+        // Create custom genre playlist folder "Psychological"
+        val created = repository.createPlaylist(
+            name = "Psychological",
+            description = "Movies I consider psychological",
+            initialMovie = primer
+        )
+        assertEquals("Psychological", created.name)
+        assertTrue("Playlist should contain Primer", created.movieIds.contains(primer.id))
+
+        // Toggle Inception into the folder
+        repository.toggleMovieInPlaylist(created.id, inception)
+        val updatedFolder = repository.playlists.value.first { it.id == created.id }
+        assertTrue("Inception should be added to playlist", updatedFolder.movieIds.contains(inception.id))
+        assertEquals(2, updatedFolder.movieIds.size)
+
+        // Batch delete both movies via removeMultipleFromLibrary
+        repository.removeMultipleFromLibrary(setOf(primer.id, inception.id))
+        assertTrue("Library should not contain deleted movies", repository.userLibrary.value.none { it.id == primer.id || it.id == inception.id })
+
+        val folderAfterDelete = repository.playlists.value.first { it.id == created.id }
+        assertTrue("Deleted movies should also be removed from playlist folders", folderAfterDelete.movieIds.isEmpty())
+
+        // Delete playlist folder
+        repository.deletePlaylist(created.id)
+        assertTrue("Playlist should be deleted", repository.playlists.value.none { it.id == created.id })
+    }
+
+    @Test
+    fun `authoritative cloud snapshot sync updates watchlist to watched and removes deleted items`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = CineverseRepository(context)
+
+        val primer = repository.search("Primer").first()
+        val barbie = repository.search("Barbie").first()
+
+        // Local device initially has Primer in Watchlist and Barbie in Watchlist
+        repository.addToWatchlist(primer)
+        repository.addToWatchlist(barbie)
+
+        // Remote snapshot has Primer upgraded to Watched (rating 10) and Barbie deleted
+        val remotePrimerWatched = primer.copy(userStatus = "Watched", userRating = 10, rewatchCount = 1)
+        val remoteEntry = DiaryEntry(
+            id = "diary_initial_${primer.id}",
+            userId = "guest",
+            titleId = primer.id,
+            movieTitle = primer.title,
+            posterUrl = primer.posterUrl,
+            entryDate = "Nov 13, 2026",
+            rating = 10,
+            review = "Synced from other device",
+            thoughts = "Synced from other device"
+        )
+
+        repository.applyAuthoritativeSnapshot(
+            remoteLibrary = listOf(remotePrimerWatched),
+            remoteDiary = listOf(remoteEntry)
+        )
+
+        val syncedLibrary = repository.userLibrary.value
+        assertEquals("Deleted item Barbie must be removed after authoritative sync", 1, syncedLibrary.size)
+        assertEquals("Primer status must be updated from Watchlist to Watched", "Watched", syncedLibrary.first().userStatus)
+        assertEquals(10, syncedLibrary.first().userRating)
     }
 }
+
+
+

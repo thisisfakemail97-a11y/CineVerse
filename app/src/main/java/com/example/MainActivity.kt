@@ -118,9 +118,11 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             ThemeMode.LIQUID_GLASS
         }
+        val initialGlassTransparency = prefs.getFloat("glass_transparency", 0.40f).coerceIn(0f, 1f)
 
         setContent {
             var currentThemeMode by remember { mutableStateOf(initialThemeMode) }
+            var glassTransparency by remember { mutableFloatStateOf(initialGlassTransparency) }
             var customAccentColor by remember { mutableStateOf(Color(0xFF54C8F5)) }
             var currentRoute by remember { mutableStateOf("home") }
             var selectedMovie by remember { mutableStateOf<MovieItem?>(null) }
@@ -174,35 +176,22 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            CineverseTheme(themeMode = currentThemeMode) {
+            CineverseTheme(
+                themeMode = currentThemeMode,
+                glassTransparency = glassTransparency
+            ) {
                 LiquidGlassAtmosphere(accentColor = customAccentColor) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.TopCenter
                     ) {
-                        Scaffold(
-                            containerColor = Color.Transparent,
+                        Box(
                             modifier = Modifier
                                 .widthIn(max = 680.dp)
-                                .fillMaxSize(),
-                            bottomBar = {
-                                if (selectedMovie == null && !showMoodScreen) {
-                                    CineverseBottomNavBar(
-                                        currentRoute = currentRoute,
-                                        accentColor = customAccentColor,
-                                        onNavigate = { route ->
-                                            currentRoute = route
-                                            selectedMovie = null
-                                            showMoodScreen = false
-                                        }
-                                    )
-                                }
-                            }
-                        ) { innerPadding ->
+                                .fillMaxSize()
+                        ) {
                             Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(innerPadding)
+                                modifier = Modifier.fillMaxSize()
                             ) {
                                 when {
                                     selectedMovie != null -> {
@@ -304,6 +293,12 @@ class MainActivity : ComponentActivity() {
                                                 },
                                                 currentAccentColor = customAccentColor,
                                                 onAccentColorChange = { customAccentColor = it },
+                                                glassTransparency = glassTransparency,
+                                                onGlassTransparencyChange = { newTransparency ->
+                                                    val clamped = newTransparency.coerceIn(0f, 1f)
+                                                    glassTransparency = clamped
+                                                    prefs.edit().putFloat("glass_transparency", clamped).apply()
+                                                },
                                                 userLibraryCount = userLibrary.size,
                                                 diaryCount = diaryEntries.size,
                                                 historyCount = viewingHistory.size,
@@ -314,6 +309,24 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                     }
+                                }
+                            }
+
+                            if (selectedMovie == null && !showMoodScreen) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                ) {
+                                    CineverseBottomNavBar(
+                                        currentRoute = currentRoute,
+                                        accentColor = customAccentColor,
+                                        onNavigate = { route ->
+                                            currentRoute = route
+                                            selectedMovie = null
+                                            showMoodScreen = false
+                                        }
+                                    )
                                 }
                             }
                         }

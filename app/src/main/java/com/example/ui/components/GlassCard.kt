@@ -35,12 +35,13 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.FrostWhite
 import com.example.ui.theme.IcyBlue
+import com.example.ui.theme.LocalGlassTransparency
 import com.example.ui.theme.LocalThemeMode
 import com.example.ui.theme.ThemeMode
 
 /**
  * Standout Optical Glass Card with clean static contour glow, top lens refraction,
- * and glowing glass edges.
+ * and glowing glass edges. Responds dynamically to LocalGlassTransparency (0% to 100% transparent).
  */
 @Composable
 fun GlassCard(
@@ -52,6 +53,9 @@ fun GlassCard(
     content: @Composable BoxScope.() -> Unit
 ) {
     val themeMode = LocalThemeMode.current
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.22f + 0.78f * opacityFactor).coerceIn(0f, 1f)
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val scale by animateFloatAsState(
@@ -61,7 +65,7 @@ fun GlassCard(
     )
 
     val glowIntensity by animateFloatAsState(
-        targetValue = if (isPressed) 1.0f else 0.52f,
+        targetValue = (if (isPressed) 1.0f else 0.52f) * rimFactor,
         animationSpec = tween(durationMillis = 220),
         label = "glass_glow"
     )
@@ -70,45 +74,53 @@ fun GlassCard(
 
     val backgroundBrush = when (themeMode) {
         ThemeMode.LIQUID_GLASS -> {
-            val baseAlpha = if (isPressed) 0.84f else 0.58f
+            val baseAlpha = (if (isPressed) 0.94f else 0.86f) * opacityFactor
+            val midAlpha = (if (isPressed) 0.97f else 0.92f) * opacityFactor
+            val bottomAlpha = (if (isPressed) 0.99f else 0.96f) * opacityFactor
             Brush.verticalGradient(
                 colors = listOf(
-                    Color(0xFF284264).copy(alpha = baseAlpha),
-                    Color(0xFF112034).copy(alpha = baseAlpha + 0.12f),
-                    Color(0xFF070F1B).copy(alpha = baseAlpha + 0.18f)
+                    Color(0xFF284264).copy(alpha = baseAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF112034).copy(alpha = midAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF070F1B).copy(alpha = bottomAlpha.coerceIn(0f, 1f))
                 )
             )
         }
         ThemeMode.PRISM_GLASS -> {
-            val baseAlpha = if (isPressed) 0.82f else 0.56f
+            val baseAlpha = (if (isPressed) 0.92f else 0.84f) * opacityFactor
+            val midAlpha = (if (isPressed) 0.96f else 0.90f) * opacityFactor
+            val bottomAlpha = (if (isPressed) 0.98f else 0.95f) * opacityFactor
             Brush.linearGradient(
                 colors = listOf(
-                    Color(0xFF23395B).copy(alpha = baseAlpha),
-                    Color(0xFF19223C).copy(alpha = baseAlpha + 0.10f),
-                    Color(0xFF2B193D).copy(alpha = baseAlpha + 0.08f),
-                    Color(0xFF09111E).copy(alpha = baseAlpha + 0.16f)
+                    Color(0xFF23395B).copy(alpha = baseAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF19223C).copy(alpha = midAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF2B193D).copy(alpha = midAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF09111E).copy(alpha = bottomAlpha.coerceIn(0f, 1f))
                 ),
                 start = Offset.Zero,
                 end = Offset.Infinite
             )
         }
         ThemeMode.BIOLUMINESCENT_NEON -> {
-            val baseAlpha = if (isPressed) 0.86f else 0.64f
+            val baseAlpha = (if (isPressed) 0.94f else 0.88f) * opacityFactor
+            val midAlpha = (if (isPressed) 0.97f else 0.93f) * opacityFactor
+            val bottomAlpha = (if (isPressed) 0.99f else 0.97f) * opacityFactor
             Brush.verticalGradient(
                 colors = listOf(
-                    Color(0xFF0B2B3C).copy(alpha = baseAlpha),
-                    Color(0xFF061726).copy(alpha = baseAlpha + 0.12f),
-                    Color(0xFF030B14).copy(alpha = baseAlpha + 0.20f)
+                    Color(0xFF0B2B3C).copy(alpha = baseAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF061726).copy(alpha = midAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF030B14).copy(alpha = bottomAlpha.coerceIn(0f, 1f))
                 )
             )
         }
         ThemeMode.SMOKY_OBSIDIAN -> {
-            val baseAlpha = if (isPressed) 0.90f else 0.76f
+            val baseAlpha = (if (isPressed) 0.96f else 0.90f) * opacityFactor
+            val midAlpha = (if (isPressed) 0.98f else 0.94f) * opacityFactor
+            val bottomAlpha = (if (isPressed) 1.0f else 0.98f) * opacityFactor
             Brush.verticalGradient(
                 colors = listOf(
-                    Color(0xFF1E2430).copy(alpha = baseAlpha),
-                    Color(0xFF11151E).copy(alpha = baseAlpha + 0.08f),
-                    Color(0xFF090C12).copy(alpha = baseAlpha + 0.14f)
+                    Color(0xFF1E2430).copy(alpha = baseAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF11151E).copy(alpha = midAlpha.coerceIn(0f, 1f)),
+                    Color(0xFF090C12).copy(alpha = bottomAlpha.coerceIn(0f, 1f))
                 )
             )
         }
@@ -143,30 +155,30 @@ fun GlassCard(
 
     val rimStrokeColors = when (themeMode) {
         ThemeMode.LIQUID_GLASS -> listOf(
-            Color.White.copy(alpha = 0.90f),
-            ElectricCyan.copy(alpha = 0.72f),
-            Color(0xFFE040FB).copy(alpha = 0.40f),
-            Color.White.copy(alpha = 0.15f),
-            ElectricCyan.copy(alpha = 0.55f)
+            Color.White.copy(alpha = 0.90f * rimFactor),
+            ElectricCyan.copy(alpha = 0.72f * rimFactor),
+            Color(0xFFE040FB).copy(alpha = 0.40f * rimFactor),
+            Color.White.copy(alpha = 0.15f * rimFactor),
+            ElectricCyan.copy(alpha = 0.55f * rimFactor)
         )
         ThemeMode.PRISM_GLASS -> listOf(
-            Color.White.copy(alpha = 0.92f),
-            Color(0xFF00F5D4).copy(alpha = 0.80f),
-            Color(0xFFFF007F).copy(alpha = 0.65f),
-            Color(0xFF00E5FF).copy(alpha = 0.50f),
-            Color(0xFF4361EE).copy(alpha = 0.75f)
+            Color.White.copy(alpha = 0.92f * rimFactor),
+            Color(0xFF00F5D4).copy(alpha = 0.80f * rimFactor),
+            Color(0xFFFF007F).copy(alpha = 0.65f * rimFactor),
+            Color(0xFF00E5FF).copy(alpha = 0.50f * rimFactor),
+            Color(0xFF4361EE).copy(alpha = 0.75f * rimFactor)
         )
         ThemeMode.BIOLUMINESCENT_NEON -> listOf(
-            Color(0xFF00FFA3).copy(alpha = 0.92f),
-            Color(0xFF00E5FF).copy(alpha = 0.80f),
-            Color(0xFF00B4D8).copy(alpha = 0.35f),
-            Color(0xFF00FFA3).copy(alpha = 0.65f)
+            Color(0xFF00FFA3).copy(alpha = 0.92f * rimFactor),
+            Color(0xFF00E5FF).copy(alpha = 0.80f * rimFactor),
+            Color(0xFF00B4D8).copy(alpha = 0.35f * rimFactor),
+            Color(0xFF00FFA3).copy(alpha = 0.65f * rimFactor)
         )
         ThemeMode.SMOKY_OBSIDIAN -> listOf(
-            Color.White.copy(alpha = 0.85f),
-            Color(0xFFCBD5E1).copy(alpha = 0.45f),
-            Color(0xFF334155).copy(alpha = 0.20f),
-            Color.White.copy(alpha = 0.45f)
+            Color.White.copy(alpha = 0.85f * rimFactor),
+            Color(0xFFCBD5E1).copy(alpha = 0.45f * rimFactor),
+            Color(0xFF334155).copy(alpha = 0.20f * rimFactor),
+            Color.White.copy(alpha = 0.45f * rimFactor)
         )
     }
 
@@ -194,21 +206,23 @@ fun GlassCard(
             val radiusPx = cornerRadius.toPx()
             val lensHeight = (size.height * 0.28f).coerceAtMost(36.dp.toPx())
 
-            // Top Optical Lens Height Refraction
-            drawRoundRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.18f),
-                        Color.White.copy(alpha = 0.04f),
-                        Color.Transparent
+            // Top Optical Lens Height Refraction scaled by opacityFactor
+            if (opacityFactor > 0.01f) {
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.22f * opacityFactor),
+                            Color.White.copy(alpha = 0.05f * opacityFactor),
+                            Color.Transparent
+                        ),
+                        startY = 0f,
+                        endY = lensHeight
                     ),
-                    startY = 0f,
-                    endY = lensHeight
-                ),
-                topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
-                size = Size(size.width - 2.dp.toPx(), lensHeight),
-                cornerRadius = CornerRadius(radiusPx, radiusPx)
-            )
+                    topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                    size = Size(size.width - 2.dp.toPx(), lensHeight),
+                    cornerRadius = CornerRadius(radiusPx, radiusPx)
+                )
+            }
 
             // Outer Glowing Glass Edge Contour
             val strokePx = if (isPressed && onClick != null) (borderWidth + 0.6.dp).toPx() else borderWidth.toPx()
@@ -244,6 +258,7 @@ fun GlassCard(
 /**
  * Uniform Squircle Action / Filter Button with breathing glass rim, visible symbol,
  * and clean wrapped typography that never shrinks or clips.
+ * Responds dynamically to LocalGlassTransparency (0% to 100% transparent).
  */
 @Composable
 fun GlassPillButton(
@@ -255,6 +270,9 @@ fun GlassPillButton(
     onClick: () -> Unit
 ) {
     val themeMode = LocalThemeMode.current
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
@@ -282,15 +300,15 @@ fun GlassPillButton(
     val backgroundBrush = if (isActive || isPressed) {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xFF2D5F88).copy(alpha = 0.90f),
-                Color(0xFF132D48).copy(alpha = 0.95f)
+                Color(0xFF2D5F88).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f)),
+                Color(0xFF132D48).copy(alpha = (0.98f * opacityFactor).coerceIn(0f, 1f))
             )
         )
     } else {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xFF223850).copy(alpha = 0.72f),
-                Color(0xFF0E1A29).copy(alpha = 0.86f)
+                Color(0xFF223850).copy(alpha = (0.86f * opacityFactor).coerceIn(0f, 1f)),
+                Color(0xFF0E1A29).copy(alpha = (0.94f * opacityFactor).coerceIn(0f, 1f))
             )
         )
     }
@@ -317,7 +335,7 @@ fun GlassPillButton(
                 drawContent()
 
                 val strokeW = if (isActive || isPressed) 1.6.dp.toPx() else 1.2.dp.toPx()
-                val effectiveAlpha = if (isActive || isPressed) (breathAlpha * 1.05f).coerceIn(0.55f, 1f) else breathAlpha
+                val effectiveAlpha = (if (isActive || isPressed) (breathAlpha * 1.05f).coerceIn(0.55f, 1f) else breathAlpha) * rimFactor
                 val rPx = cornerDp.toPx()
                 drawRoundRect(
                     brush = Brush.linearGradient(
@@ -384,6 +402,7 @@ fun GlassPillButton(
 
 /**
  * Uniform Squircle Glass Icon Button with breathing rim and crisp centered icon.
+ * Responds dynamically to LocalGlassTransparency (0% to 100% transparent).
  */
 @Composable
 fun GlassIconButton(
@@ -394,6 +413,9 @@ fun GlassIconButton(
     tint: Color? = null,
     onClick: () -> Unit
 ) {
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.25f + 0.75f * opacityFactor).coerceIn(0f, 1f)
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
@@ -424,26 +446,28 @@ fun GlassIconButton(
             .size(size)
             .scale(pressScale)
             .drawBehind {
-                val r = (size.toPx() * 0.72f).coerceAtLeast(1f)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            activeTint.copy(alpha = 0.24f * breathAlpha),
-                            Color.Transparent
+                if (opacityFactor > 0.01f) {
+                    val r = (size.toPx() * 0.72f).coerceAtLeast(1f)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                activeTint.copy(alpha = 0.24f * breathAlpha * opacityFactor),
+                                Color.Transparent
+                            ),
+                            center = center,
+                            radius = r
                         ),
                         center = center,
                         radius = r
-                    ),
-                    center = center,
-                    radius = r
-                )
+                    )
+                }
             }
             .clip(squircleShape)
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF2B4769).copy(alpha = if (isPressed) 0.92f else 0.72f),
-                        Color(0xFF0F1E2E).copy(alpha = if (isPressed) 0.96f else 0.88f)
+                        Color(0xFF2B4769).copy(alpha = ((if (isPressed) 0.95f else 0.86f) * opacityFactor).coerceIn(0f, 1f)),
+                        Color(0xFF0F1E2E).copy(alpha = ((if (isPressed) 0.98f else 0.94f) * opacityFactor).coerceIn(0f, 1f))
                     )
                 )
             )
@@ -452,13 +476,14 @@ fun GlassIconButton(
 
                 val strokeW = if (isPressed) 1.7.dp.toPx() else 1.3.dp.toPx()
                 val rPx = squircleCorner.toPx()
+                val effectiveRimAlpha = breathAlpha * rimFactor
                 drawRoundRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = breathAlpha),
-                            activeTint.copy(alpha = breathAlpha),
-                            IcyBlue.copy(alpha = breathAlpha * 0.5f),
-                            Color.White.copy(alpha = breathAlpha * 0.8f)
+                            Color.White.copy(alpha = effectiveRimAlpha),
+                            activeTint.copy(alpha = effectiveRimAlpha),
+                            IcyBlue.copy(alpha = effectiveRimAlpha * 0.5f),
+                            Color.White.copy(alpha = effectiveRimAlpha * 0.8f)
                         ),
                         start = Offset(0f, 0f),
                         end = Offset(this.size.width, this.size.height)
@@ -485,3 +510,4 @@ fun GlassIconButton(
         )
     }
 }
+

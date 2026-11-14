@@ -65,6 +65,8 @@ fun ProfileScreen(
     onThemeModeChange: (ThemeMode) -> Unit = {},
     currentAccentColor: Color = ElectricCyan,
     onAccentColorChange: (Color) -> Unit = {},
+    glassTransparency: Float = 0.40f,
+    onGlassTransparencyChange: (Float) -> Unit = {},
     userLibraryCount: Int = 0,
     diaryCount: Int = 0,
     historyCount: Int = 0,
@@ -77,8 +79,8 @@ fun ProfileScreen(
     val repository = remember { com.example.data.CineverseRepository(context) }
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
+    val opacityFactor = (1f - glassTransparency.coerceIn(0f, 1f)).coerceIn(0f, 1f)
 
-    val selectedRegion by repository.selectedRegion.collectAsStateWithLifecycle()
     val currentUser by repository.currentUser.collectAsStateWithLifecycle()
     val isSyncing by repository.isSyncing.collectAsStateWithLifecycle()
     val lastSyncTime by repository.lastSyncTime.collectAsStateWithLifecycle()
@@ -89,8 +91,7 @@ fun ProfileScreen(
         ?: currentUserId
         ?: ""
     var authBusy by remember { mutableStateOf(false) }
-
-    val availableRegions = listOf("India", "USA", "UK", "Canada", "Australia", "Japan", "Global")
+    var syncStatusMessage by remember { mutableStateOf<String?>(null) }
 
     // Backup & Restore Dialog States
     var showExportDialog by remember { mutableStateOf(false) }
@@ -188,7 +189,98 @@ fun ProfileScreen(
                             mode = mode,
                             isSelected = isSelected,
                             accentColor = currentAccentColor,
+                            opacityFactor = opacityFactor,
                             onClick = { onThemeModeChange(mode) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+                HorizontalDivider(color = SteelBlue.copy(alpha = 0.22f))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Liquid Glass Transparency Slider (0% to 100% Transparent)
+                val transparencyPercent = kotlin.math.round(glassTransparency.coerceIn(0f, 1f) * 100f).toInt()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Text(
+                            text = "Liquid Glass Transparency",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = FrostWhite
+                        )
+                        Text(
+                            text = "Adjusts dock, cards, tabs & buttons (0% to 100%)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SteelBlue
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(currentAccentColor.copy(alpha = (0.22f * opacityFactor).coerceIn(0.08f, 1f)))
+                            .border(1.dp, currentAccentColor.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .testTag("glass_transparency_value_badge")
+                    ) {
+                        Text(
+                            text = "$transparencyPercent% Transparent",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = currentAccentColor
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Slider(
+                    value = glassTransparency.coerceIn(0f, 1f),
+                    onValueChange = { newVal ->
+                        onGlassTransparencyChange(newVal.coerceIn(0f, 1f))
+                    },
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = currentAccentColor,
+                        activeTrackColor = currentAccentColor,
+                        inactiveTrackColor = SteelBlue.copy(alpha = 0.32f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("glass_transparency_slider")
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("0% (Solid Glass)", style = MaterialTheme.typography.labelSmall, color = SteelBlue)
+                    Text("40% (Default)", style = MaterialTheme.typography.labelSmall, color = IcyBlue)
+                    Text("100% (Clear Glass)", style = MaterialTheme.typography.labelSmall, color = SteelBlue)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        "0%" to 0.0f,
+                        "25%" to 0.25f,
+                        "40%" to 0.40f,
+                        "75%" to 0.75f,
+                        "100%" to 1.0f
+                    ).forEach { (label, presetVal) ->
+                        GlassPillButton(
+                            text = label,
+                            compact = true,
+                            isActive = kotlin.math.abs(glassTransparency - presetVal) < 0.03f,
+                            onClick = { onGlassTransparencyChange(presetVal) }
                         )
                     }
                 }
@@ -255,7 +347,7 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 3. Cloud Persistence & Multi-Device Sync Status
+        // 3. Unified Cloud Vault & Account Sync (Single set of Upload / Download & Gmail Sign-In)
         GlassCard(
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24.dp
@@ -269,10 +361,16 @@ fun ProfileScreen(
                     Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                         Text("Cloud Vault & Synchronization", style = MaterialTheme.typography.titleMedium, color = FrostWhite)
                         Text(
-                            text = if (!isSignedInWithGoogle) "Local Vault: Sign in with Gmail below to sync across devices"
-                            else "Synced with ${googleAccountEmail.ifBlank { "Google Account" }}",
+                            text = when {
+                                isSyncing -> "Synchronizing library, playlists, diary & history..."
+                                isSignedInWithGoogle -> buildString {
+                                    append("Connected: ${googleAccountEmail.ifBlank { "Google Account" }}")
+                                    if (lastSyncTime.isNotBlank()) append(" • Synced $lastSyncTime")
+                                }
+                                else -> "Sign in with your Gmail ID to sync across devices"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = SteelBlue
+                            color = if (isSignedInWithGoogle) IcyBlue else SteelBlue
                         )
                     }
 
@@ -339,6 +437,161 @@ fun ProfileScreen(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (!isSignedInWithGoogle) {
+                    GlassPillButton(
+                        text = if (authBusy) "Connecting Google..." else "Sign in with Gmail ID",
+                        icon = Icons.Default.AccountCircle,
+                        isActive = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("google_sign_in_button"),
+                        onClick = {
+                            if (authBusy) return@GlassPillButton
+                            val activity = context.findActivity()
+                            if (activity == null) {
+                                Toast.makeText(context, "Unable to launch Google Sign-In UI.", Toast.LENGTH_SHORT).show()
+                                return@GlassPillButton
+                            }
+                            coroutineScope.launch {
+                                authBusy = true
+                                try {
+                                    val webClientId = context.getString(R.string.default_web_client_id)
+                                    val signInOption = GetSignInWithGoogleOption.Builder(webClientId).build()
+                                    val request = GetCredentialRequest.Builder()
+                                        .addCredentialOption(signInOption)
+                                        .build()
+                                    val credentialManager = CredentialManager.create(activity)
+                                    val result = credentialManager.getCredential(activity, request)
+                                    val cred = result.credential
+                                    if (cred is CustomCredential &&
+                                        cred.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                                    ) {
+                                        val googleCred = GoogleIdTokenCredential.createFrom(cred.data)
+                                        val signInRes = repository.signInWithGoogleIdToken(googleCred.idToken)
+                                        signInRes.onSuccess { user ->
+                                            Toast.makeText(
+                                                context,
+                                                "Signed in as ${user.email ?: "Google User"}! Sync active.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }.onFailure { err ->
+                                            Toast.makeText(
+                                                context,
+                                                "Firebase Auth failed: ${err.localizedMessage ?: "Unknown error"}",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    }
+                                } catch (_: GetCredentialCancellationException) {
+                                    // User dismissed Google account picker
+                                } catch (e: Exception) {
+                                    Toast.makeText(
+                                        context,
+                                        "Google Sign-In note: ${e.localizedMessage ?: "Check Google Play Services"}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } finally {
+                                    authBusy = false
+                                }
+                            }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Single Authoritative Upload & Download Synchronization Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    GlassPillButton(
+                        text = if (isSyncing) "Uploading..." else "Upload",
+                        icon = Icons.Default.CloudUpload,
+                        isActive = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("sync_upload_button"),
+                        onClick = {
+                            if (isSyncing) return@GlassPillButton
+                            coroutineScope.launch {
+                                val (_, message) = repository.uploadToCloud()
+                                syncStatusMessage = message
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                    GlassPillButton(
+                        text = if (isSyncing) "Downloading..." else "Download",
+                        icon = Icons.Default.CloudDownload,
+                        isActive = isSignedInWithGoogle,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("sync_download_button"),
+                        onClick = {
+                            if (isSyncing) return@GlassPillButton
+                            coroutineScope.launch {
+                                val (_, message) = repository.downloadFromCloud()
+                                syncStatusMessage = message
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                }
+
+                if (isSignedInWithGoogle) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        GlassPillButton(
+                            text = if (isSyncing) "Syncing..." else "Sync Now",
+                            icon = Icons.Default.Sync,
+                            isActive = false,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("sync_now_button"),
+                            onClick = {
+                                coroutineScope.launch {
+                                    repository.refreshFromBackend()
+                                    Toast.makeText(context, "Cloud sync completed.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                        GlassPillButton(
+                            text = "Sign Out",
+                            icon = Icons.Default.Logout,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("google_sign_out_button"),
+                            onClick = {
+                                coroutineScope.launch {
+                                    withContext(NonCancellable) {
+                                        try {
+                                            CredentialManager.create(context)
+                                                .clearCredentialState(ClearCredentialStateRequest())
+                                        } catch (_: Exception) { }
+                                        repository.signOut()
+                                    }
+                                    Toast.makeText(context, "Signed out of Google Account.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    }
+                }
+
+                if (syncStatusMessage != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = syncStatusMessage!!,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ElectricCyan,
+                        modifier = Modifier.testTag("sync_status_message")
+                    )
+                }
             }
         }
 
@@ -398,229 +651,6 @@ fun ProfileScreen(
                         color = ElectricCyan
                     )
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        // 5. Preferences & Personal Gmail Account Sync
-        GlassCard(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 24.dp
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text("Preferences & Account Sync", style = MaterialTheme.typography.titleMedium, color = FrostWhite)
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Streaming Region
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Streaming Region", color = FrostWhite, style = MaterialTheme.typography.bodyMedium)
-                        Text("Where to Watch provider catalog", color = SteelBlue, style = MaterialTheme.typography.bodySmall)
-                    }
-                    GlassPillButton(
-                        text = selectedRegion,
-                        onClick = {
-                            val nextIdx = (availableRegions.indexOf(selectedRegion) + 1) % availableRegions.size
-                            repository.setSelectedRegion(availableRegions[nextIdx])
-                        }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-                HorizontalDivider(color = SteelBlue.copy(alpha = 0.2f))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Real Google Sign-In & Firestore Multi-Device Sync
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                            Text("Gmail Sign-In & Cloud Sync", style = MaterialTheme.typography.titleMedium, color = FrostWhite)
-                            Text(
-                                text = when {
-                                    isSyncing -> "Synchronizing library, diary & history..."
-                                    isSignedInWithGoogle -> buildString {
-                                        append("Connected: $googleAccountEmail")
-                                        if (lastSyncTime.isNotBlank()) append(" • Synced $lastSyncTime")
-                                    }
-                                    else -> "Sign in with your Gmail ID to auto-sync across devices"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isSignedInWithGoogle) IcyBlue else SteelBlue
-                            )
-                        }
-
-                        if (isSignedInWithGoogle) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF00F5D4).copy(alpha = 0.16f), RoundedCornerShape(12.dp))
-                                    .border(1.dp, Color(0xFF00F5D4), RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                            ) {
-                                if (isSyncing) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(13.dp),
-                                        color = Color(0xFF00F5D4),
-                                        strokeWidth = 1.8.dp
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Sync,
-                                        contentDescription = "Synced",
-                                        tint = Color(0xFF00F5D4),
-                                        modifier = Modifier.requiredSize(15.dp)
-                                    )
-                                }
-                                Text(
-                                    text = if (isSyncing) "Syncing" else "Synced",
-                                    color = Color(0xFF00F5D4),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    if (!isSignedInWithGoogle) {
-                        GlassPillButton(
-                            text = if (authBusy) "Connecting Google..." else "Sign in with Gmail ID",
-                            icon = Icons.Default.AccountCircle,
-                            isActive = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("google_sign_in_button"),
-                            onClick = {
-                                if (authBusy) return@GlassPillButton
-                                val activity = context.findActivity()
-                                if (activity == null) {
-                                    Toast.makeText(context, "Unable to launch Google Sign-In UI.", Toast.LENGTH_SHORT).show()
-                                    return@GlassPillButton
-                                }
-                                coroutineScope.launch {
-                                    authBusy = true
-                                    try {
-                                        val webClientId = context.getString(R.string.default_web_client_id)
-                                        val signInOption = GetSignInWithGoogleOption.Builder(webClientId).build()
-                                        val request = GetCredentialRequest.Builder()
-                                            .addCredentialOption(signInOption)
-                                            .build()
-                                        val credentialManager = CredentialManager.create(activity)
-                                        val result = credentialManager.getCredential(activity, request)
-                                        val cred = result.credential
-                                        if (cred is CustomCredential &&
-                                            cred.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                                        ) {
-                                            val googleCred = GoogleIdTokenCredential.createFrom(cred.data)
-                                            val signInRes = repository.signInWithGoogleIdToken(googleCred.idToken)
-                                            signInRes.onSuccess { user ->
-                                                Toast.makeText(
-                                                    context,
-                                                    "Signed in as ${user.email ?: "Google User"}! Sync active.",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }.onFailure { err ->
-                                                Toast.makeText(
-                                                    context,
-                                                    "Firebase Auth failed: ${err.localizedMessage ?: "Unknown error"}",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }
-                                        }
-                                    } catch (_: GetCredentialCancellationException) {
-                                        // User dismissed Google account picker
-                                    } catch (e: Exception) {
-                                        Toast.makeText(
-                                            context,
-                                            "Google Sign-In note: ${e.localizedMessage ?: "Check Google Play Services"}",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    } finally {
-                                        authBusy = false
-                                    }
-                                }
-                            }
-                        )
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            GlassPillButton(
-                                text = if (isSyncing) "Syncing..." else "Sync Now",
-                                icon = Icons.Default.Sync,
-                                isActive = true,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("sync_now_button"),
-                                onClick = {
-                                    coroutineScope.launch {
-                                        repository.refreshFromBackend()
-                                        Toast.makeText(context, "Cloud sync completed.", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            )
-                            GlassPillButton(
-                                text = "Sign Out",
-                                icon = Icons.Default.Logout,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("google_sign_out_button"),
-                                onClick = {
-                                    coroutineScope.launch {
-                                        withContext(NonCancellable) {
-                                            try {
-                                                CredentialManager.create(context)
-                                                    .clearCredentialState(ClearCredentialStateRequest())
-                                            } catch (_: Exception) { }
-                                            repository.signOut()
-                                        }
-                                        Toast.makeText(context, "Signed out of Google Account.", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        // 6. System Architecture Information
-        GlassCard(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 20.dp
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Personal Entertainment Platform • v1.6.0",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = FrostWhite.copy(alpha = 0.8f)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Cloud Synchronized • Credential Manager • Gemini Neural Engine",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SteelBlue
-                )
             }
         }
     }
@@ -761,6 +791,7 @@ private fun ThemeOptionRow(
     mode: ThemeMode,
     isSelected: Boolean,
     accentColor: Color,
+    opacityFactor: Float = 0.60f,
     onClick: () -> Unit
 ) {
     val previewColors = when (mode) {
@@ -775,8 +806,8 @@ private fun ThemeOptionRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(
-                if (isSelected) accentColor.copy(alpha = 0.14f)
-                else Color(0xFF0E1826).copy(alpha = 0.55f)
+                if (isSelected) accentColor.copy(alpha = (0.24f * opacityFactor).coerceIn(0f, 1f))
+                else Color(0xFF0E1826).copy(alpha = (0.85f * opacityFactor).coerceIn(0f, 1f))
             )
             .border(
                 width = if (isSelected) 1.5.dp else 1.dp,

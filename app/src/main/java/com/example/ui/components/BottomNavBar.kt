@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.ElectricCyan
+import com.example.ui.theme.LocalGlassTransparency
 import com.example.ui.theme.SteelBlue
 
 sealed class Screen(val route: String, val description: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
@@ -48,6 +49,7 @@ sealed class Screen(val route: String, val description: String, val icon: androi
 
 /**
  * Floating Liquid Glass capsule dock with:
+ * - Dynamic transparency controlled by LocalGlassTransparency (0% to 100% transparent).
  * - Slow, relaxed breathing animation on tab borders and icons.
  * - Fluid Search Button Dock Morphing: When on the Home screen, the Search button lives in the center
  *   of the Home screen (and is collapsed in the dock so there is never a duplicate search button).
@@ -60,6 +62,10 @@ fun CineverseBottomNavBar(
     accentColor: Color = ElectricCyan,
     onNavigate: (String) -> Unit
 ) {
+    val glassTransparency = LocalGlassTransparency.current.coerceIn(0f, 1f)
+    val opacityFactor = (1f - glassTransparency).coerceIn(0f, 1f)
+    val rimFactor = (0.22f + 0.78f * opacityFactor).coerceIn(0f, 1f)
+
     val items = listOf(
         Screen.Home,
         Screen.Search,
@@ -119,7 +125,7 @@ fun CineverseBottomNavBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 12.dp)
+            .padding(horizontal = 28.dp, vertical = 14.dp)
             .testTag("bottom_nav_dock"),
         contentAlignment = Alignment.Center
     ) {
@@ -127,53 +133,56 @@ fun CineverseBottomNavBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp)
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.14f),
-                            Color(0xFF1A2D44).copy(alpha = 0.32f),
-                            Color(0xFF0A1422).copy(alpha = 0.42f)
+                            Color(0xFF284566).copy(alpha = (0.86f * opacityFactor).coerceIn(0f, 1f)),
+                            Color(0xFF16283E).copy(alpha = (0.92f * opacityFactor).coerceIn(0f, 1f)),
+                            Color(0xFF0A1422).copy(alpha = (0.96f * opacityFactor).coerceIn(0f, 1f))
                         )
                     )
                 )
                 .drawBehind {
-                    // Subtle frosted glass diagonal sheen + top icy frost reflection
-                    drawRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.16f),
-                                Color(0xFFB8E8FF).copy(alpha = 0.07f),
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.08f)
-                            ),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, size.height)
+                    if (opacityFactor > 0.01f) {
+                        // Frosted glass sheen + top icy frost reflection scaled by opacityFactor
+                        drawRect(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.22f * opacityFactor),
+                                    Color(0xFFB8E8FF).copy(alpha = 0.12f * opacityFactor),
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.12f * opacityFactor)
+                                ),
+                                start = Offset(0f, 0f),
+                                end = Offset(size.width, size.height)
+                            )
                         )
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.18f),
-                                Color.Transparent
-                            ),
-                            startY = 0f,
-                            endY = size.height * 0.45f
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.26f * opacityFactor),
+                                    Color.Transparent
+                                ),
+                                startY = 0f,
+                                endY = size.height * 0.42f
+                            )
                         )
-                    )
+                    }
                 }
                 .drawWithContent {
                     drawContent()
 
                     val strokeW = 1.25.dp.toPx()
-                    val rPx = 22.dp.toPx()
+                    val rPx = 24.dp.toPx()
+                    val effectiveRim = breathAlpha * rimFactor
                     drawRoundRect(
                         brush = Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = (breathAlpha * 0.90f).coerceAtMost(0.95f)),
-                                accentColor.copy(alpha = breathAlpha * 0.70f),
-                                Color.White.copy(alpha = breathAlpha * 0.35f),
-                                accentColor.copy(alpha = breathAlpha * 0.55f)
+                                Color.White.copy(alpha = (effectiveRim * 0.90f).coerceIn(0f, 1f)),
+                                accentColor.copy(alpha = (effectiveRim * 0.72f).coerceIn(0f, 1f)),
+                                Color.White.copy(alpha = (effectiveRim * 0.35f).coerceIn(0f, 1f)),
+                                accentColor.copy(alpha = (effectiveRim * 0.55f).coerceIn(0f, 1f))
                             ),
                             start = Offset(0f, 0f),
                             end = Offset(size.width, size.height)
@@ -184,7 +193,7 @@ fun CineverseBottomNavBar(
                         style = Stroke(width = strokeW)
                     )
                 }
-                .padding(horizontal = 6.dp),
+                .padding(horizontal = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             Row(
@@ -194,41 +203,43 @@ fun CineverseBottomNavBar(
             ) {
                 items.forEach { screen ->
                     val selected = currentRoute == screen.route
-                            if (screen == Screen.Search) {
-                                // Fluidly morphing Search Dock Slot: hidden when on Home (where Search is centered),
-                                // glides down into the dock when on any other tab
-                                if (searchSlotWidth > 1.dp || !isOnHome) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(searchSlotWidth)
-                                            .height(48.dp)
-                                            .graphicsLayer {
-                                                translationY = searchVerticalOffsetDp.toPx()
-                                                scaleX = searchDockScale
-                                                scaleY = searchDockScale
-                                                alpha = searchDockAlpha
-                                            }
-                                            .testTag("dock_search_button"),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        IconOnlyDockItem(
-                                            screen = screen,
-                                            selected = selected,
-                                            accentColor = accentColor,
-                                            breathAlphaProvider = { breathAlpha },
-                                            onClick = { onNavigate(screen.route) }
-                                        )
+                    if (screen == Screen.Search) {
+                        if (searchSlotWidth > 1.dp || !isOnHome) {
+                            Box(
+                                modifier = Modifier
+                                    .width(searchSlotWidth)
+                                    .height(48.dp)
+                                    .graphicsLayer {
+                                        translationY = searchVerticalOffsetDp.toPx()
+                                        scaleX = searchDockScale
+                                        scaleY = searchDockScale
+                                        alpha = searchDockAlpha
                                     }
-                                }
-                            } else {
+                                    .testTag("dock_search_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 IconOnlyDockItem(
                                     screen = screen,
                                     selected = selected,
                                     accentColor = accentColor,
+                                    opacityFactor = opacityFactor,
+                                    rimFactor = rimFactor,
                                     breathAlphaProvider = { breathAlpha },
                                     onClick = { onNavigate(screen.route) }
                                 )
                             }
+                        }
+                    } else {
+                        IconOnlyDockItem(
+                            screen = screen,
+                            selected = selected,
+                            accentColor = accentColor,
+                            opacityFactor = opacityFactor,
+                            rimFactor = rimFactor,
+                            breathAlphaProvider = { breathAlpha },
+                            onClick = { onNavigate(screen.route) }
+                        )
+                    }
                 }
             }
         }
@@ -240,6 +251,8 @@ private fun IconOnlyDockItem(
     screen: Screen,
     selected: Boolean,
     accentColor: Color,
+    opacityFactor: Float,
+    rimFactor: Float,
     breathAlphaProvider: () -> Float,
     onClick: () -> Unit
 ) {
@@ -267,14 +280,14 @@ private fun IconOnlyDockItem(
                 indication = null
             ) { onClick() }
             .drawBehind {
-                if (selected || isPressed) {
-                    val bAlpha = breathAlphaProvider()
+                if ((selected || isPressed) && opacityFactor > 0.01f) {
+                    val bAlpha = breathAlphaProvider() * opacityFactor
                     val r = (size.width * 0.65f).coerceAtLeast(1f)
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                accentColor.copy(alpha = 0.30f * bAlpha),
-                                accentColor.copy(alpha = 0.08f * bAlpha),
+                                accentColor.copy(alpha = 0.36f * bAlpha),
+                                accentColor.copy(alpha = 0.10f * bAlpha),
                                 Color.Transparent
                             ),
                             center = center,
@@ -293,10 +306,10 @@ private fun IconOnlyDockItem(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(accentColor.copy(alpha = 0.14f))
+                    .background(accentColor.copy(alpha = (0.24f * opacityFactor).coerceIn(0f, 1f)))
                     .drawWithContent {
                         drawContent()
-                        val bAlpha = breathAlphaProvider()
+                        val bAlpha = breathAlphaProvider() * rimFactor
                         val rPx = 14.dp.toPx()
                         val strokeW = 1.3.dp.toPx()
                         drawRoundRect(
@@ -332,3 +345,4 @@ private fun IconOnlyDockItem(
         )
     }
 }
+

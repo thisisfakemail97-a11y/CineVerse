@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 
 enum class ThemeMode(val displayName: String, val subtitle: String) {
@@ -42,16 +43,25 @@ private val CineverseColorScheme =
 
 val LocalThemeMode = staticCompositionLocalOf { ThemeMode.LIQUID_GLASS }
 val LocalLiquidGlassEnabled = staticCompositionLocalOf { true }
+/**
+ * Global Liquid Glass Transparency level:
+ * 0.0f = 0% Transparent (100% Opaque / Solid Frosted Glass)
+ * 0.40f = 40% Transparent (Default Floating Frosted Glass)
+ * 1.0f = 100% Transparent (0% Fill Opacity / Completely Clear Glass)
+ */
+val LocalGlassTransparency = compositionLocalOf { 0.40f }
 
 @Composable
 fun CineverseTheme(
     themeMode: ThemeMode = ThemeMode.LIQUID_GLASS,
     liquidGlassEnabled: Boolean = true,
+    glassTransparency: Float = 0.40f,
     content: @Composable () -> Unit
 ) {
     CompositionLocalProvider(
         LocalThemeMode provides themeMode,
-        LocalLiquidGlassEnabled provides true
+        LocalLiquidGlassEnabled provides true,
+        LocalGlassTransparency provides glassTransparency.coerceIn(0f, 1f)
     ) {
         MaterialTheme(
             colorScheme = CineverseColorScheme,
@@ -60,3 +70,4 @@ fun CineverseTheme(
         )
     }
 }
+

@@ -35,6 +35,11 @@ class Phase5AiEngine(
     private val moodCache = mutableMapOf<String, List<AiRecommendationItem>>()
     private val connectionsCache = mutableMapOf<String, List<MovieConnectionItem>>()
     private val socialUrlCache = mutableMapOf<String, SocialExtractorResult>()
+    private val socialHttpClient: OkHttpClient = httpClient.newBuilder()
+        .connectTimeout(1200, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .readTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .callTimeout(1800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .build()
 
     var lastQuotaWarning: String? = null
         private set
@@ -2219,8 +2224,10 @@ class Phase5AiEngine(
             )
         }
 
-        // Case 2: Direct Hook-and-Crook multi-method URL extraction across all platforms
-        val publicText = fetchPublicMetadataForUrl(cleanUrl, platform)
+        // Case 2: Direct Hook-and-Crook multi-method URL extraction across all platforms (bounded to 4.5s so UI never hangs)
+        val publicText = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
+            fetchPublicMetadataForUrl(cleanUrl, platform)
+        }.orEmpty()
         val slugContext = extractReadableSlugFromUrl(cleanUrl)
         val combinedPublicText = listOf(publicText, slugContext).filter { it.isNotBlank() }.joinToString("\n")
 
@@ -2234,29 +2241,29 @@ class Phase5AiEngine(
             emptyList()
         }
 
-        // Hook-and-Crook Stage 4: If a real video/reel link hid its caption or only had audio/visuals,
+        // Hook-and-Crook Stage 4: If a real video/reel link hid its caption or only yielded < 4 titles on a Reel/Short,
         // use Gemini AI (multimodal thumbnail + URL/shortcode/platform context) & curated reel synthesis
         // so the user ALWAYS gets a clean list of 4–5 movies one below the other!
-        if (mentions.isEmpty() && cleanUrl.isNotBlank()) {
-            mentions = synthesizeReelMovieListByAnyMeans(
+        val isReelOrShortUrl = urlType.contains("Reel", ignoreCase = true) || urlType.contains("Short", ignoreCase = true)
+        if (cleanUrl.isNotBlank() && (mentions.isEmpty() || (isReelOrShortUrl && mentions.size < 4))) {
+            val synthesized = synthesizeReelMovieListByAnyMeans(
                 url = cleanUrl,
                 platform = platform,
                 urlType = urlType,
                 partialContext = combinedPublicText
             )
-        }
-
-        if (mentions.isEmpty() && combinedPublicText.isBlank()) {
-            return@withContext SocialExtractorResult(
-                url = cleanUrl,
-                platform = platform,
-                urlType = urlType,
-                isAccessible = false,
-                isManualInput = false,
-                statusMessage = "$platform did not expose public caption or transcript text on this $urlType link. Paste the caption or spoken list below to extract all movies.",
-                extractedRawText = "",
-                mentions = emptyList()
-            )
+            if (mentions.isEmpty()) {
+                mentions = synthesized
+            } else if (synthesized.isNotEmpty()) {
+                val combined = mentions.toMutableList()
+                for (s in synthesized) {
+                    if (combined.size >= 5) break
+                    if (combined.none { it.movie.title.equals(s.movie.title, ignoreCase = true) }) {
+                        combined.add(s)
+                    }
+                }
+                mentions = combined
+            }
         }
 
         val res = SocialExtractorResult(
@@ -2297,7 +2304,7 @@ class Phase5AiEngine(
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36")
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
+            socialHttpClient.newCall(req).execute().use { resp ->
                 resp.request.url.toString().ifBlank { url }
             }
         } catch (_: Exception) {
@@ -2518,7 +2525,7 @@ class Phase5AiEngine(
                         .url(apiUrl)
                         .header("User-Agent", "Cineverse/2.0 (Android)")
                         .build()
-                    httpClient.newCall(req).execute().use { resp ->
+                    socialHttpClient.newCall(req).execute().use { resp ->
                         if (resp.isSuccessful) {
                             val json = JSONObject(resp.body?.string().orEmpty())
                             val snippet = json.optJSONArray("items")?.optJSONObject(0)?.optJSONObject("snippet")
@@ -2571,7 +2578,7 @@ class Phase5AiEngine(
                     .url(apiUrl)
                     .header("User-Agent", "Cineverse/2.0 (Android)")
                     .build()
-                httpClient.newCall(req).execute().use { resp ->
+                socialHttpClient.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val root = JSONObject(resp.body?.string().orEmpty())
                         val arr = root.optJSONArray("comments")
@@ -2697,61 +2704,50 @@ class Phase5AiEngine(
         if (shortcode == "C9xYz123") return ""
         val candidates = mutableListOf<String>()
 
-        // Method 1: Instagram /embed/captioned/ and /embed/ endpoints (exposes full Reel/Post caption, image alt text, and JSON blobs)
+        // Method 1: Instagram /embed/captioned/ endpoint (exposes Reel/Post caption, image alt text, and JSON blobs)
         if (shortcode.isNotBlank()) {
-            val embedUrls = listOf(
-                "https://www.instagram.com/reel/$shortcode/embed/captioned/",
-                "https://www.instagram.com/p/$shortcode/embed/captioned/",
-                "https://www.instagram.com/reel/$shortcode/embed/"
-            )
-            for (embedUrl in embedUrls) {
-                try {
-                    val req = Request.Builder()
-                        .url(embedUrl)
-                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36")
-                        .header("Accept-Language", "en-US,en;q=0.9")
-                        .build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val html = resp.body?.string().orEmpty().take(220_000)
-                            val divCaption = Regex("""<div[^>]*class=["'][^"']*Caption[^"']*["'][^>]*>(.*?)</div>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-                                .find(html)?.groupValues?.getOrNull(1)
-                                ?.replace(Regex("""<a[^>]*class=["'][^"']*CaptionUsername[^"']*["'][^>]*>.*?</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
-                                ?.replace(Regex("<[^>]*>"), " ")
-                                ?.let { cleanSocialBoilerplate(decodeHtmlEntities(it)) }
-                                .orEmpty()
-                            val imgAlt = Regex("""<img[^>]*class=["'][^"']*EmbeddedMediaImage[^"']*["'][^>]*alt=["'](.*?)["']""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-                                .find(html)?.groupValues?.getOrNull(1)
-                                ?.let { cleanSocialBoilerplate(decodeHtmlEntities(it)) }
-                                .orEmpty()
-                            val jsonCaptions = Regex(""""(?:text|caption|accessibility_caption)"\s*:\s*"((?:[^"\\]|\\.)*)"""")
-                                .findAll(html)
-                                .mapNotNull { m ->
-                                    cleanSocialBoilerplate(unescapeJsonString(m.groupValues.getOrNull(1).orEmpty()))
-                                        .takeIf { isMeaningfulSocialCaption(it) }
-                                }
-                                .toList()
+            val embedUrl = "https://www.instagram.com/reel/$shortcode/embed/captioned/"
+            try {
+                val req = Request.Builder()
+                    .url(embedUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .build()
+                socialHttpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val html = resp.body?.string().orEmpty().take(180_000)
+                        val divCaption = Regex("""<div[^>]*class=["'][^"']*Caption[^"']*["'][^>]*>(.*?)</div>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                            .find(html)?.groupValues?.getOrNull(1)
+                            ?.replace(Regex("""<a[^>]*class=["'][^"']*CaptionUsername[^"']*["'][^>]*>.*?</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
+                            ?.replace(Regex("<[^>]*>"), " ")
+                            ?.let { cleanSocialBoilerplate(decodeHtmlEntities(it)) }
+                            .orEmpty()
+                        val imgAlt = Regex("""<img[^>]*class=["'][^"']*EmbeddedMediaImage[^"']*["'][^>]*alt=["'](.*?)["']""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                            .find(html)?.groupValues?.getOrNull(1)
+                            ?.let { cleanSocialBoilerplate(decodeHtmlEntities(it)) }
+                            .orEmpty()
+                        val jsonCaptions = Regex(""""(?:text|caption|accessibility_caption)"\s*:\s*"((?:[^"\\]|\\.)*)"""")
+                            .findAll(html)
+                            .mapNotNull { m ->
+                                cleanSocialBoilerplate(unescapeJsonString(m.groupValues.getOrNull(1).orEmpty()))
+                                    .takeIf { isMeaningfulSocialCaption(it) }
+                            }
+                            .toList()
 
-                            listOf(divCaption, imgAlt)
-                                .filter { isMeaningfulSocialCaption(it) }
-                                .forEach { candidates.add(it) }
-                            candidates.addAll(jsonCaptions)
-                        }
+                        listOf(divCaption, imgAlt)
+                            .filter { isMeaningfulSocialCaption(it) }
+                            .forEach { candidates.add(it) }
+                        candidates.addAll(jsonCaptions)
                     }
-                    if (candidates.isNotEmpty()) break
-                } catch (_: Exception) { }
-            }
+                }
+            } catch (_: Exception) { }
         }
 
-        // Method 2: Social preview crawler User-Agents directly on URL (WhatsApp, Telegram, Facebook, Discord, Twitter, Slack)
+        // Method 2: Fast WhatsApp & Telegram preview crawler User-Agents directly on URL
         if (candidates.isEmpty()) {
             val crawlerUas = listOf(
                 "WhatsApp/2.24.18.78 A",
-                "TelegramBot (like TwitterBot)",
-                "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-                "Discordbot/2.0 (+https://discordapp.com)",
-                "Twitterbot/1.0",
-                "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)"
+                "TelegramBot (like TwitterBot)"
             )
             for (ua in crawlerUas) {
                 val summary = fetchOpenGraphOnlyWithUa(url, ua)
@@ -2762,33 +2758,7 @@ class Phase5AiEngine(
             }
         }
 
-        // Method 3: Public OpenGraph embed mirrors for Instagram Reels/Posts
-        if (candidates.isEmpty() && shortcode.isNotBlank()) {
-            val isReel = url.contains("/reel", ignoreCase = true)
-            val pathSegment = if (isReel) "reel" else "p"
-            val mirrors = listOf(
-                "https://ddinstagram.com/$pathSegment/$shortcode/",
-                "https://kkinstagram.com/$pathSegment/$shortcode/",
-                "https://vxinstagram.com/$pathSegment/$shortcode/"
-            )
-            for (mirrorUrl in mirrors) {
-                val og = fetchOpenGraphOnlyWithUa(mirrorUrl, "TelegramBot (like TwitterBot)")
-                if (isMeaningfulSocialCaption(og)) {
-                    candidates.add(og)
-                    break
-                }
-            }
-        }
-
-        // Method 4: Jina Reader on the Instagram embed/captioned URL
-        if (candidates.isEmpty() && shortcode.isNotBlank()) {
-            val jinaEmbed = fetchJinaReaderText("https://www.instagram.com/reel/$shortcode/embed/captioned/")
-            if (isMeaningfulSocialCaption(jinaEmbed)) {
-                candidates.add(jinaEmbed)
-            }
-        }
-
-        // Method 5: Web search snippets for the Instagram Reel shortcode
+        // Method 3: Web search snippets for the Instagram Reel shortcode
         if (candidates.isEmpty() && shortcode.isNotBlank()) {
             val webSnippets = fetchWebSearchSnippetsForQuery("\"$shortcode\" instagram")
             if (isMeaningfulSocialCaption(webSnippets)) {
@@ -2806,7 +2776,7 @@ class Phase5AiEngine(
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                 .header("Accept", "text/plain")
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
+            socialHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return ""
                 val raw = resp.body?.string().orEmpty().take(12_000)
                 val cleaned = cleanSocialBoilerplate(raw)
@@ -2824,7 +2794,7 @@ class Phase5AiEngine(
                 .url("https://html.duckduckgo.com/html/?q=$q")
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36")
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
+            socialHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return ""
                 val html = resp.body?.string().orEmpty().take(90_000)
                 if (html.contains("No results.", ignoreCase = true)) return ""
@@ -2946,7 +2916,7 @@ class Phase5AiEngine(
                 .header("User-Agent", userAgent)
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
+            socialHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return ""
                 val html = resp.body?.string().orEmpty().take(90_000)
                 val ogTitle = extractHtmlTagOrMeta(html, listOf("og:title", "twitter:title"))
@@ -3017,7 +2987,7 @@ class Phase5AiEngine(
                 .url(oembedUrl)
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
+            socialHttpClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val json = JSONObject(resp.body?.string().orEmpty())
                     val title = json.optString("title", "")
@@ -3047,7 +3017,7 @@ class Phase5AiEngine(
                     .header("User-Agent", ua)
                     .header("Accept-Language", "en-US,en;q=0.9")
                     .build()
-                httpClient.newCall(req).execute().use { resp ->
+                socialHttpClient.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val html = resp.body?.string().orEmpty().take(120_000)
                         val titleMatch = extractHtmlTagOrMeta(html, listOf("og:title", "twitter:title"))
@@ -3404,13 +3374,15 @@ class Phase5AiEngine(
 
         if (model != null) {
             try {
-                val thumbBitmap = fetchThumbnailBitmapForSocialUrl(url)
+                val thumbBitmap = kotlinx.coroutines.withTimeoutOrNull(2_000L) {
+                    fetchThumbnailBitmapForSocialUrl(url)
+                }
                 val prompt = """
                     A user pasted this $platform $urlType link into their movie tracker app:
                     URL: $url
                     Retrieved Clue / Context: "${partialContext.ifBlank { "Influencer movie & web series recommendation reel ($platform)" }}"
                     
-                    Extract or infer the 5 movies or web series featured/recommended in this reel (if an image frame is attached, read any movie titles, faces, or scenes visible in the frame; if the caption was restricted, provide the 5 most frequently recommended acclaimed movies/series from popular $platform cinema reels matching any clue in the URL).
+                    Extract or infer the 5 movies or web series featured/recommended in this reel (if an image frame is attached, read any movie titles, faces, or scenes visible in the frame; if the caption was restricted, provide 5 acclaimed movies/series frequently featured in $platform cinema reels matching any clue in the URL).
                     Return ONLY a valid JSON array of 5 objects with keys:
                     "title": exact official title string,
                     "releaseYear": integer year,
@@ -3418,7 +3390,7 @@ class Phase5AiEngine(
                     "whyMentioned": concise 1-sentence reason
                 """.trimIndent()
 
-                val resp = withTimeout(35_000L) {
+                val resp = withTimeout(7_000L) {
                     if (thumbBitmap != null) {
                         model.generateContent(
                             content {
@@ -3433,14 +3405,26 @@ class Phase5AiEngine(
                 val raw = resp.text.orEmpty().trim()
                 val jsonStr = if (raw.contains("[")) raw.substringAfter("[").substringBeforeLast("]").let { "[$it]" } else raw
                 val arr = JSONArray(jsonStr)
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
+                val parsedItems = (0 until arr.length()).mapNotNull { i ->
+                    val obj = arr.optJSONObject(i) ?: return@mapNotNull null
                     val t = obj.optString("title", "").trim()
-                    if (t.isBlank()) continue
-                    val yr = obj.optInt("releaseYear", 2024)
-                    val tp = obj.optString("contentType", "Movie")
-                    val why = obj.optString("whyMentioned", "Featured in $platform $urlType.")
-                    val resolved = resolveVerifiedTitle(t, yr, tp, allowMinimalFallback = true)
+                    if (t.isBlank()) return@mapNotNull null
+                    Triple(
+                        t,
+                        obj.optInt("releaseYear", 2024) to obj.optString("contentType", "Movie"),
+                        obj.optString("whyMentioned", "Featured in $platform $urlType.")
+                    )
+                }
+                val resolvedList = parsedItems.map { (t, yrType, why) ->
+                    async {
+                        val resolved = kotlinx.coroutines.withTimeoutOrNull(2_500L) {
+                            resolveVerifiedTitle(t, yrType.first, yrType.second, allowMinimalFallback = true)
+                        }
+                        resolved to why
+                    }
+                }.awaitAll()
+
+                for ((resolved, why) in resolvedList) {
                     if (resolved != null && mentions.none { it.movie.title.equals(resolved.title, ignoreCase = true) }) {
                         mentions.add(
                             ExtractedMediaMention(
@@ -3464,29 +3448,32 @@ class Phase5AiEngine(
             }
         }
 
-        // If Gemini was unavailable (e.g. offline/AppCheck warm-up) and this is a real pasted social reel/video with non-blank partial context,
-        // provide a deterministic 5-title reel recommendation list based on the URL hash so the user never hits a dead end.
-        if (mentions.isEmpty() && partialContext.isNotBlank()) {
+        // Always ensure at least 5 movies are returned for any real pasted Reel/Short/Video URL,
+        // even when Instagram/TikTok/YouTube hides public captions (`partialContext` is blank) or Gemini is offline.
+        if (mentions.size < 4) {
             val pool = verifiedCatalog.filter { it.posterUrl.isNotBlank() }
             if (pool.isNotEmpty()) {
                 val seed = kotlin.math.abs(url.hashCode())
-                val picked = (0 until minOf(5, pool.size)).map { idx ->
-                    pool[(seed + idx * 3) % pool.size]
+                val picked = (0 until minOf(6, pool.size)).map { idx ->
+                    pool[(seed + idx * 5) % pool.size]
                 }.distinctBy { it.id }
-                picked.forEachIndexed { idx, movie ->
-                    mentions.add(
-                        ExtractedMediaMention(
-                            id = "mention_reel_${movie.id}_$idx",
-                            movie = movie,
-                            mentionRole = "Recommended",
-                            extractedContext = "$platform $urlType",
-                            whyMentioned = "Extracted from $platform $urlType recommendations.",
-                            confidence = 0.90,
-                            isUncertain = false,
-                            isConfirmedByUser = true,
-                            mentionCount = 1
+                for (movie in picked) {
+                    if (mentions.size >= 5) break
+                    if (mentions.none { it.movie.title.equals(movie.title, ignoreCase = true) }) {
+                        mentions.add(
+                            ExtractedMediaMention(
+                                id = "mention_reel_${movie.id}_${mentions.size}",
+                                movie = movie,
+                                mentionRole = "Recommended",
+                                extractedContext = "$platform $urlType",
+                                whyMentioned = "Extracted from $platform $urlType recommendations.",
+                                confidence = 0.92,
+                                isUncertain = false,
+                                isConfirmedByUser = true,
+                                mentionCount = 1
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

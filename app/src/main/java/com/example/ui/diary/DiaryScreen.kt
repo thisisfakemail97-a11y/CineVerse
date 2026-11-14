@@ -47,6 +47,7 @@ import com.example.data.CinemaWrappedReport
 import com.example.data.CineverseRepository
 import com.example.data.DiaryEntry
 import com.example.data.MovieItem
+import com.example.data.MoviePlaylist
 import com.example.ui.components.GlassCard
 import com.example.ui.components.GlassIconButton
 import com.example.ui.components.GlassPillButton
@@ -81,10 +82,15 @@ fun DiaryScreen(
     val repository = remember { CineverseRepository(context) }
     val coroutineScope = rememberCoroutineScope()
     val refreshVersion by repository.refreshVersion.collectAsStateWithLifecycle()
+    val playlists by repository.playlists.collectAsStateWithLifecycle()
     var isRefreshing by remember { mutableStateOf(false) }
 
-    // Mode toggle: "diary" vs "wrapped" (Cinema Wrapped placed in Movie Diary per user preference)
+    // Mode toggle: "diary", "playlists", "wrapped", "map"
     var activeMode by remember { mutableStateOf("diary") }
+    var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var playlistToDelete by remember { mutableStateOf<MoviePlaylist?>(null) }
+
     var wrappedPeriod by remember { mutableStateOf("All Time") }
     var wrappedReport by remember { mutableStateOf<CinemaWrappedReport?>(null) }
     var isGeneratingWrapped by remember { mutableStateOf(false) }
@@ -120,12 +126,11 @@ fun DiaryScreen(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(bottom = 100.dp)
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Title Header + New Entry Button
+        // Title Header + Action Button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -138,6 +143,7 @@ fun DiaryScreen(
             ) {
                 Text(
                     text = when (activeMode) {
+                        "playlists" -> "Movie Playlists"
                         "wrapped" -> "Cinema Wrapped"
                         "map" -> "Movie Map"
                         else -> "Movie Diary"
@@ -149,6 +155,7 @@ fun DiaryScreen(
                 )
                 Text(
                     text = when (activeMode) {
+                        "playlists" -> "${playlists.size} custom genre folders & playlists"
                         "wrapped" -> "Personal viewing recap & Gemini insights"
                         "map" -> "Interactive Spider Web & Movie Matrix"
                         else -> "${diaryEntries.size} entries in your personal timeline"
@@ -160,22 +167,35 @@ fun DiaryScreen(
                 )
             }
 
-            if (activeMode == "diary") {
-                GlassIconButton(
-                    icon = Icons.Default.Add,
-                    contentDescription = "New Diary Entry",
-                    size = 44.dp,
-                    onClick = { showNewEntryDialog = true },
-                    modifier = Modifier.testTag("new_diary_entry_btn")
-                )
+            when (activeMode) {
+                "diary" -> {
+                    GlassIconButton(
+                        icon = Icons.Default.Add,
+                        contentDescription = "New Diary Entry",
+                        size = 44.dp,
+                        onClick = { showNewEntryDialog = true },
+                        modifier = Modifier.testTag("new_diary_entry_btn")
+                    )
+                }
+                "playlists" -> {
+                    GlassIconButton(
+                        icon = Icons.Default.CreateNewFolder,
+                        contentDescription = "New Playlist Folder",
+                        size = 44.dp,
+                        onClick = { showCreatePlaylistDialog = true },
+                        modifier = Modifier.testTag("new_playlist_folder_btn")
+                    )
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Top Segmented Switcher: Diary, Wrapped, and Movie Map
+        // Top Segmented Switcher: Diary, Playlists, Wrapped, and Movie Map
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             GlassPillButton(
@@ -183,21 +203,30 @@ fun DiaryScreen(
                 icon = Icons.AutoMirrored.Filled.MenuBook,
                 isActive = activeMode == "diary",
                 onClick = { activeMode = "diary" },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.testTag("diary_tab_diary")
+            )
+            GlassPillButton(
+                text = "Playlists (${playlists.size})",
+                icon = Icons.Default.FolderSpecial,
+                isActive = activeMode == "playlists",
+                onClick = {
+                    activeMode = "playlists"
+                },
+                modifier = Modifier.testTag("diary_tab_playlists")
             )
             GlassPillButton(
                 text = "Wrapped",
                 icon = Icons.Default.AutoAwesome,
                 isActive = activeMode == "wrapped",
                 onClick = { activeMode = "wrapped" },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.testTag("diary_tab_wrapped")
             )
             GlassPillButton(
                 text = "Map",
                 icon = Icons.Default.Hub,
                 isActive = activeMode == "map",
                 onClick = { activeMode = "map" },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.testTag("diary_tab_map")
             )
         }
 
@@ -220,6 +249,23 @@ fun DiaryScreen(
                 .weight(1f)
         ) {
             when (activeMode) {
+                "playlists" -> {
+                    PlaylistsFoldersView(
+                        playlists = playlists,
+                        userLibrary = userLibrary,
+                        selectedPlaylistId = selectedPlaylistId,
+                        onSelectPlaylist = { selectedPlaylistId = it },
+                        onCreatePlaylistClick = { showCreatePlaylistDialog = true },
+                        onDeletePlaylistClick = { playlistToDelete = it },
+                        onRemoveMovieFromPlaylist = { plId, movieId ->
+                            repository.removeMovieFromPlaylist(plId, movieId)
+                        },
+                        onToggleMovieInPlaylist = { plId, movie ->
+                            repository.toggleMovieInPlaylist(plId, movie)
+                        },
+                        onMovieClick = onMovieClick
+                    )
+                }
                 "wrapped" -> {
                     CinemaWrappedView(
                         report = wrappedReport,
@@ -246,6 +292,7 @@ fun DiaryScreen(
                 }
                 else -> {
                     Column(modifier = Modifier.fillMaxSize()) {
+                        val diaryOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
                         OutlinedTextField(
                             value = filterText,
                             onValueChange = { filterText = it },
@@ -263,8 +310,8 @@ fun DiaryScreen(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(22.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = MidnightNavy.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MidnightNavy.copy(alpha = 0.3f),
+                                focusedContainerColor = MidnightNavy.copy(alpha = (0.75f * diaryOpacity).coerceIn(0f, 1f)),
+                                unfocusedContainerColor = MidnightNavy.copy(alpha = (0.55f * diaryOpacity).coerceIn(0f, 1f)),
                                 focusedBorderColor = ElectricCyan,
                                 unfocusedBorderColor = SteelBlue.copy(alpha = 0.4f),
                                 focusedTextColor = FrostWhite,
@@ -319,6 +366,7 @@ fun DiaryScreen(
                         } else {
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 110.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 items(filteredEntries, key = { it.id }) { entry ->
@@ -344,6 +392,118 @@ fun DiaryScreen(
                 }
             }
         }
+    }
+
+    if (showCreatePlaylistDialog) {
+        var folderName by remember { mutableStateOf("") }
+        var folderDesc by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylistDialog = false },
+            containerColor = MidnightNavy,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = ElectricCyan)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Create Playlist / Folder", color = FrostWhite)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Create a custom genre playlist (e.g., Psychological, Mind-Bending, Comfort Movies) to organize movies your own way.",
+                        color = SteelBlue,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = folderName,
+                        onValueChange = { folderName = it },
+                        placeholder = { Text("Playlist / Folder Name (e.g., Psychological)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("diary_new_playlist_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ElectricCyan,
+                            unfocusedBorderColor = SteelBlue,
+                            focusedTextColor = FrostWhite,
+                            unfocusedTextColor = FrostWhite
+                        )
+                    )
+                    OutlinedTextField(
+                        value = folderDesc,
+                        onValueChange = { folderDesc = it },
+                        placeholder = { Text("Custom genre description (optional)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("diary_new_playlist_desc_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ElectricCyan,
+                            unfocusedBorderColor = SteelBlue,
+                            focusedTextColor = FrostWhite,
+                            unfocusedTextColor = FrostWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (folderName.isNotBlank()) {
+                            repository.createPlaylist(folderName.trim(), folderDesc.trim())
+                            showCreatePlaylistDialog = false
+                        }
+                    },
+                    enabled = folderName.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
+                    modifier = Modifier.testTag("diary_confirm_create_playlist_btn")
+                ) {
+                    Text("Create Folder", color = DeepBlack)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreatePlaylistDialog = false }) {
+                    Text("Cancel", color = FrostWhite)
+                }
+            }
+        )
+    }
+
+    if (playlistToDelete != null) {
+        val targetPl = playlistToDelete!!
+        AlertDialog(
+            onDismissRequest = { playlistToDelete = null },
+            containerColor = MidnightNavy,
+            title = { Text("Delete Folder \"${targetPl.name}\"?", color = FrostWhite) },
+            text = {
+                Text(
+                    text = "Are you sure you want to delete the \"${targetPl.name}\" playlist folder? Movies inside it will remain in your library.",
+                    color = SteelBlue,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (selectedPlaylistId == targetPl.id) {
+                            selectedPlaylistId = null
+                        }
+                        repository.deletePlaylist(targetPl.id)
+                        playlistToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                    modifier = Modifier.testTag("confirm_delete_playlist_btn")
+                ) {
+                    Text("Delete Folder", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { playlistToDelete = null }) {
+                    Text("Cancel", color = FrostWhite)
+                }
+            }
+        )
     }
 
     if (showNewEntryDialog) {
@@ -400,6 +560,419 @@ fun DiaryScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun PlaylistsFoldersView(
+    playlists: List<MoviePlaylist>,
+    userLibrary: List<MovieItem>,
+    selectedPlaylistId: String?,
+    onSelectPlaylist: (String?) -> Unit,
+    onCreatePlaylistClick: () -> Unit,
+    onDeletePlaylistClick: (MoviePlaylist) -> Unit,
+    onRemoveMovieFromPlaylist: (String, String) -> Unit,
+    onToggleMovieInPlaylist: (String, MovieItem) -> Unit,
+    onMovieClick: (MovieItem) -> Unit
+) {
+    val activePlaylist = remember(playlists, selectedPlaylistId) {
+        playlists.find { it.id == selectedPlaylistId }
+    }
+    var showAddFromLibraryDialog by remember { mutableStateOf(false) }
+
+    if (activePlaylist != null) {
+        val folderMovies = remember(activePlaylist.movieIds, userLibrary) {
+            activePlaylist.movieIds.mapNotNull { mId ->
+                userLibrary.find { it.id == mId || "title_${it.title.hashCode()}" == mId }
+            }
+        }
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = 22.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        GlassIconButton(
+                            icon = Icons.Default.ArrowBack,
+                            contentDescription = "Back to Folders",
+                            size = 38.dp,
+                            onClick = { onSelectPlaylist(null) },
+                            modifier = Modifier.testTag("back_to_playlists_btn")
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = activePlaylist.name,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = FrostWhite
+                            )
+                            Text(
+                                text = if (activePlaylist.description.isNotBlank()) {
+                                    "${activePlaylist.description} • ${folderMovies.size} movie(s)"
+                                } else {
+                                    "${folderMovies.size} movie(s) in this custom playlist"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ElectricCyan
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GlassIconButton(
+                            icon = Icons.Default.Add,
+                            contentDescription = "Add Movie from Library",
+                            size = 38.dp,
+                            onClick = { showAddFromLibraryDialog = true },
+                            modifier = Modifier.testTag("add_movie_to_playlist_btn")
+                        )
+                        GlassIconButton(
+                            icon = Icons.Default.DeleteOutline,
+                            contentDescription = "Delete Folder",
+                            size = 38.dp,
+                            tint = Color(0xFFFF5252),
+                            onClick = { onDeletePlaylistClick(activePlaylist) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (folderMovies.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = SteelBlue,
+                            modifier = Modifier.size(52.dp)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "No movies in \"${activePlaylist.name}\" yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = FrostWhite
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Open any movie's detail page and tap the Add to Folder icon at the top, or add from your library below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SteelBlue,
+                            textAlign = TextAlign.Center
+                        )
+                        if (userLibrary.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            GlassPillButton(
+                                text = "Add from Library",
+                                icon = Icons.Default.Add,
+                                isActive = true,
+                                onClick = { showAddFromLibraryDialog = true }
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 110.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(folderMovies, key = { it.id }) { movie ->
+                        GlassCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("playlist_movie_card_${movie.id}"),
+                            cornerRadius = 18.dp,
+                            onClick = { onMovieClick(movie) }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                MoviePosterImage(
+                                    posterUrl = movie.posterUrl,
+                                    title = movie.title,
+                                    signatureColorHex = movie.signatureColorHex,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .height(84.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    contentScale = ContentScale.Crop,
+                                    releaseYear = movie.releaseYear,
+                                    movieId = movie.id
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = movie.title,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = FrostWhite,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${movie.releaseYear} • ${movie.contentType} • ${movie.userStatus.ifBlank { "Watchlist" }}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SteelBlue
+                                    )
+                                    if (movie.userRating > 0) {
+                                        Text(
+                                            text = "My Rating: ${movie.userRating}/10",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = ElectricCyan
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val safeId = movie.id.ifBlank { "title_${movie.title.hashCode()}" }
+                                        onRemoveMovieFromPlaylist(activePlaylist.id, safeId)
+                                        onRemoveMovieFromPlaylist(activePlaylist.id, movie.id)
+                                    },
+                                    modifier = Modifier.testTag("remove_from_playlist_${movie.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Remove from Folder",
+                                        tint = Color(0xFFFF5252)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showAddFromLibraryDialog) {
+            AlertDialog(
+                onDismissRequest = { showAddFromLibraryDialog = false },
+                containerColor = MidnightNavy,
+                title = { Text("Add Movies to \"${activePlaylist.name}\"", color = FrostWhite) },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (userLibrary.isEmpty()) {
+                            Text("Your library is empty. Search and add movies first.", color = SteelBlue)
+                        } else {
+                            userLibrary.forEach { libMovie ->
+                                val safeId = libMovie.id.ifBlank { "title_${libMovie.title.hashCode()}" }
+                                val checked = safeId in activePlaylist.movieIds || libMovie.id in activePlaylist.movieIds
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { onToggleMovieInPlaylist(activePlaylist.id, libMovie) }
+                                        .padding(vertical = 4.dp, horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { onToggleMovieInPlaylist(activePlaylist.id, libMovie) },
+                                        colors = CheckboxDefaults.colors(
+                                            checkedColor = ElectricCyan,
+                                            uncheckedColor = SteelBlue,
+                                            checkmarkColor = DeepBlack
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "${libMovie.title} (${libMovie.releaseYear})",
+                                        color = FrostWhite,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAddFromLibraryDialog = false }) {
+                        Text("Done", color = ElectricCyan)
+                    }
+                }
+            )
+        }
+    } else {
+        if (playlists.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FolderSpecial,
+                        contentDescription = "No Playlists",
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "No Custom Folders / Playlists Yet",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = FrostWhite,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Create folders like \"Psychological\", \"Mind-Bending\", or \"Weekend Classics\" and add movies using the Add to Folder icon on any movie's detail page.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SteelBlue,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    GlassPillButton(
+                        text = "Create New Folder",
+                        icon = Icons.Default.CreateNewFolder,
+                        isActive = true,
+                        onClick = onCreatePlaylistClick,
+                        modifier = Modifier.testTag("empty_state_create_playlist_btn")
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("diary_playlists_list"),
+                contentPadding = PaddingValues(bottom = 110.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(playlists, key = { it.id }) { pl ->
+                    val folderMovies = remember(pl.movieIds, userLibrary) {
+                        pl.movieIds.mapNotNull { mId ->
+                            userLibrary.find { it.id == mId || "title_${it.title.hashCode()}" == mId }
+                        }
+                    }
+
+                    GlassCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("playlist_folder_card_${pl.name.lowercase().replace(" ", "_")}"),
+                        cornerRadius = 22.dp,
+                        onClick = { onSelectPlaylist(pl.id) }
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(ElectricCyan.copy(alpha = 0.18f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FolderSpecial,
+                                            contentDescription = null,
+                                            tint = ElectricCyan,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = pl.name,
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = FrostWhite,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = if (pl.description.isNotBlank()) {
+                                                "${pl.description} • ${pl.movieIds.size} movie(s)"
+                                            } else {
+                                                "Custom Genre Playlist • ${pl.movieIds.size} movie(s)"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = SteelBlue,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                IconButton(
+                                    onClick = { onDeletePlaylistClick(pl) },
+                                    modifier = Modifier.testTag("delete_playlist_folder_${pl.name.lowercase().replace(" ", "_")}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Delete Folder",
+                                        tint = Color(0xFFFF5252)
+                                    )
+                                }
+                            }
+
+                            if (folderMovies.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(folderMovies.take(6), key = { it.id }) { m ->
+                                        MoviePosterImage(
+                                            posterUrl = m.posterUrl,
+                                            title = m.title,
+                                            signatureColorHex = m.signatureColorHex,
+                                            modifier = Modifier
+                                                .width(52.dp)
+                                                .height(76.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable { onMovieClick(m) },
+                                            contentScale = ContentScale.Crop,
+                                            releaseYear = m.releaseYear,
+                                            movieId = m.id
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -749,11 +1322,12 @@ private fun WrappedStatTile(
     value: String,
     modifier: Modifier = Modifier
 ) {
+    val tileOpacity = (1f - com.example.ui.theme.LocalGlassTransparency.current).coerceIn(0f, 1f)
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF0E1E32).copy(alpha = 0.78f))
-            .border(1.dp, ElectricCyan.copy(alpha = 0.30f), RoundedCornerShape(16.dp))
+            .background(Color(0xFF0E1E32).copy(alpha = (0.88f * tileOpacity).coerceIn(0f, 1f)))
+            .border(1.dp, ElectricCyan.copy(alpha = 0.30f * (0.25f + 0.75f * tileOpacity)), RoundedCornerShape(16.dp))
             .padding(vertical = 12.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
